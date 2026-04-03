@@ -1,0 +1,22 @@
+[project]
+name = "thetalab"
+version = "0.1.0"
+description = "AI-powered options selling assistant — Sell Put & Sell Call theta strategies"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "yfinance",
+    "scipy",
+    "numpy",
+    "langchain>=1.2.6",
+    "langchain-google-genai>=2.1.12",
+    "python-dotenv>=1.0.0",
+    "langgraph-checkpoint-sqlite>=3.0.3",
+    "aiosqlite>=0.22.1",
+    "sse-starlette>=3.3.3",
+]
+
+[project.scripts]
+thetalab = "backend.app:main"
