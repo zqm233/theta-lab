@@ -127,7 +127,7 @@ uv sync
 
 ```bash
 cd frontend
-npm install
+bun install
 cd ..
 ```
 
@@ -142,7 +142,7 @@ uv run python -m backend.app
 
 ```bash
 cd frontend
-npm run dev
+bun run dev
 # UI available at http://localhost:5173
 ```
 

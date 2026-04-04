@@ -8,7 +8,7 @@ export default defineConfig({
     proxy: {
       // Same-origin /api in dev → avoids CORS when using 127.0.0.1 vs localhost
       "/api": {
-        target: "http://127.0.0.1:8001",
+        target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
     },

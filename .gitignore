@@ -21,6 +21,8 @@ ENV/
 # Runtime databases
 data/*.db
 data/*.db.bak
+data/*.db-shm
+data/*.db-wal
 
 # Cursor
 .cursorrules

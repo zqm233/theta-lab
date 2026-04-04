@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from backend.agent.memory import (
@@ -28,6 +28,42 @@ from backend.agent.tools import ALL_TOOLS
 logger = logging.getLogger(__name__)
 
 DB_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+
+def _create_llm():
+    """Instantiate the LLM based on LLM_PROVIDER, LLM_MODEL, and LLM_BASE_URL env vars."""
+    provider = os.getenv("LLM_PROVIDER", "").lower()
+    model = os.getenv("LLM_MODEL", "").strip()
+    base_url = os.getenv("LLM_BASE_URL", "").strip() or None
+
+    if not provider or not model:
+        raise ValueError(
+            "LLM not configured. Set LLM_PROVIDER and LLM_MODEL "
+            "in Settings or environment variables."
+        )
+
+    if provider == "google":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        kwargs: dict = {"model": model}
+        if base_url:
+            kwargs["base_url"] = base_url
+        return ChatGoogleGenerativeAI(**kwargs)
+    elif provider == "openai":
+        from langchain_openai import ChatOpenAI
+        kwargs = {"model": model}
+        if base_url:
+            kwargs["base_url"] = base_url
+        return ChatOpenAI(**kwargs)
+    elif provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+        kwargs = {"model": model}
+        if base_url:
+            kwargs["base_url"] = base_url
+        return ChatAnthropic(**kwargs)
+    else:
+        raise ValueError(
+            f"Unsupported LLM_PROVIDER: '{provider}'. "
+            f"Supported: google, openai, anthropic"
+        )
 
 SYSTEM_PROMPT_TEMPLATE = """你是 ThetaLab —— 一个专为期权卖方打造的 AI 投研助手。
 你专注于 Sell Put 和 Sell Call 策略，帮助交易者通过 Theta 时间衰减稳健收取权利金。
@@ -102,7 +138,7 @@ class ThetaLabAgent:
         self._checkpointer = SqliteSaver(self._checkpoint_conn)
         self._checkpointer.setup()
 
-        self._model = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+        self._model = _create_llm()
 
     @property
     def store(self):

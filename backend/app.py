@@ -29,6 +29,14 @@ def get_agent():
     return _agent
 
 
+def reset_agent():
+    """Close the current agent and force re-creation on next access."""
+    global _agent
+    if _agent is not None:
+        _agent.close()
+        _agent = None
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     init_db()
@@ -36,8 +44,11 @@ async def lifespan(application: FastAPI):
     from backend.agent.mcp_tools import init_mcp_tools
     await init_mcp_tools()
 
-    get_agent()
-    logging.getLogger(__name__).info("ThetaLab agent initialised")
+    try:
+        get_agent()
+        logging.getLogger(__name__).info("ThetaLab agent initialised")
+    except ValueError as e:
+        logging.getLogger(__name__).warning("Agent not initialised: %s", e)
     yield
     if _agent is not None:
         _agent.close()

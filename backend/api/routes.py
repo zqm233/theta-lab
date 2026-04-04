@@ -1064,7 +1064,13 @@ class ChatRequest(BaseModel):
 
 def _get_agent():
     from backend.app import get_agent
-    return get_agent()
+    try:
+        return get_agent()
+    except ValueError as e:
+        raise HTTPException(
+            503,
+            f"LLM not configured. Please go to Settings to configure your LLM provider, model, and API key.",
+        ) from e
 
 
 @router.post("/chat")
@@ -1222,3 +1228,85 @@ def dual_invest_configure(body: dict):
         })
         from backend.data.binance import check_binance_configured
         return {"exchange": "binance", "configured": check_binance_configured()}
+
+
+# ── LLM Configuration ──────────────────────────────────────────────
+
+_SUPPORTED_PROVIDERS = ["google", "openai", "anthropic"]
+_PROVIDER_API_KEY_ENV = {
+    "google": "GOOGLE_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+}
+
+
+@router.get("/llm/config")
+def get_llm_config():
+    """Return current LLM configuration (API key is masked)."""
+    provider = os.getenv("LLM_PROVIDER", "").lower()
+    model = os.getenv("LLM_MODEL", "")
+    base_url = os.getenv("LLM_BASE_URL", "")
+    api_key_env = _PROVIDER_API_KEY_ENV.get(provider, "")
+    has_key = bool(os.getenv(api_key_env, ""))
+    configured = bool(provider and model and has_key)
+    return {
+        "provider": provider,
+        "model": model,
+        "baseUrl": base_url,
+        "configured": configured,
+        "supportedProviders": _SUPPORTED_PROVIDERS,
+    }
+
+
+class LLMConfigRequest(BaseModel):
+    provider: str
+    model: str = ""
+    apiKey: str = ""
+    baseUrl: str = ""
+
+
+@router.post("/llm/config")
+def set_llm_config(body: LLMConfigRequest):
+    """Update LLM provider, model, API key, and optional base URL."""
+    from pathlib import Path
+
+    provider = body.provider.lower().strip()
+    if provider not in _SUPPORTED_PROVIDERS:
+        raise HTTPException(
+            400,
+            f"Unsupported provider: '{provider}'. Supported: {', '.join(_SUPPORTED_PROVIDERS)}",
+        )
+
+    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    env_updates: dict[str, str] = {
+        "LLM_PROVIDER": provider,
+    }
+
+    if body.model.strip():
+        env_updates["LLM_MODEL"] = body.model.strip()
+        os.environ["LLM_MODEL"] = body.model.strip()
+
+    if body.baseUrl.strip():
+        env_updates["LLM_BASE_URL"] = body.baseUrl.strip()
+        os.environ["LLM_BASE_URL"] = body.baseUrl.strip()
+    else:
+        os.environ.pop("LLM_BASE_URL", None)
+
+    if body.apiKey.strip():
+        key_env = _PROVIDER_API_KEY_ENV[provider]
+        env_updates[key_env] = body.apiKey.strip()
+        os.environ[key_env] = body.apiKey.strip()
+
+    os.environ["LLM_PROVIDER"] = provider
+    _persist_env(env_path, env_updates)
+
+    from backend.app import reset_agent
+    reset_agent()
+
+    has_key = bool(os.getenv(_PROVIDER_API_KEY_ENV[provider], ""))
+    return {
+        "provider": provider,
+        "model": body.model.strip(),
+        "baseUrl": body.baseUrl.strip(),
+        "configured": has_key,
+    }

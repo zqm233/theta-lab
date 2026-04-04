@@ -157,6 +157,23 @@ const translations = {
     en: "Go to Settings → Exchange API Configuration",
   },
 
+  // Settings — LLM
+  llmConfig: { zh: "大模型配置", en: "LLM Configuration" },
+  llmConfigDesc: {
+    zh: "配置 AI 助手使用的大模型供应商、模型和 API Key。支持自定义 Base URL 以使用代理/加速服务。",
+    en: "Configure the LLM provider, model, and API key for the AI assistant. Custom Base URL supported for proxy services.",
+  },
+  llmProvider: { zh: "供应商", en: "Provider" },
+  llmModel: { zh: "模型", en: "Model" },
+  llmModelPlaceholder: { zh: "模型名称，如 gemini-2.5-flash", en: "Model name, e.g. gemini-2.5-flash" },
+  llmApiKey: { zh: "API Key", en: "API Key" },
+  llmBaseUrl: { zh: "Base URL", en: "Base URL" },
+  llmBaseUrlPlaceholder: { zh: "留空使用官方地址，填写代理/加速地址", en: "Leave empty for official endpoint, or enter proxy URL" },
+  llmBaseUrlRequired: { zh: "Base URL（必填，如 https://api.deepseek.com/v1）", en: "Base URL (required, e.g. https://api.deepseek.com/v1)" },
+  llmConfigured: { zh: "已配置", en: "Configured" },
+  llmNotConfigured: { zh: "未配置", en: "Not configured" },
+  llmConfigSaved: { zh: "大模型配置已保存，Agent 已重新加载", en: "LLM config saved, agent reloaded" },
+
   // Settings
   settingsRefreshInterval: { zh: "数据刷新间隔", en: "Data Refresh Interval" },
   settingsRefreshDesc: {

@@ -146,6 +146,8 @@ body {
 .sidebar-nav-icon {
   font-size: 1.05rem;
   flex-shrink: 0;
+  width: 1.4em;
+  text-align: center;
 }
 
 .sidebar-nav-label {
