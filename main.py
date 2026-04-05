@@ -1,13 +1,15 @@
 """CLI entry point for quick agent testing."""
 
+import asyncio
+
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 from backend.agent.agent import ThetaLabAgent
 
 
-def main():
+async def main():
     agent = ThetaLabAgent()
     thread_id = "cli-demo"
 
@@ -26,7 +28,7 @@ def main():
                 continue
 
             print("AI: ", end="", flush=True)
-            for chunk in agent.stream(user_input, thread_id=thread_id):
+            async for chunk in agent.astream(user_input, thread_id=thread_id):
                 print(chunk, end="", flush=True)
             print("\n")
     finally:
@@ -34,4 +36,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

@@ -1264,6 +1264,13 @@ tr:hover .portfolio-remove-btn {
   border-color: var(--accent);
 }
 
+.add-form-input:disabled {
+  background: var(--surface);
+  color: var(--text-muted);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .add-form-price-row {
   display: flex;
   align-items: center;
@@ -1300,6 +1307,18 @@ tr:hover .portfolio-remove-btn {
 
 .add-form-submit:hover {
   opacity: 0.9;
+}
+
+.add-form-submit.llm-edit-btn {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.add-form-submit.llm-edit-btn:hover {
+  background: var(--accent);
+  color: #fff;
+  opacity: 1;
 }
 
 /* ===== Toast ===== */
@@ -1548,11 +1567,13 @@ tr:hover .portfolio-remove-btn {
 
 .chat-msg-content {
   flex: 1;
+  min-width: 0;
   font-size: 0.88rem;
   line-height: 1.6;
   padding: 8px 12px;
   border-radius: var(--radius);
   word-break: break-word;
+  overflow-x: auto;
 }
 
 .chat-msg-content p { margin: 0 0 0.5em; }
@@ -1594,6 +1615,9 @@ tr:hover .portfolio-remove-btn {
   border-collapse: collapse;
   margin: 0.4em 0;
   font-size: 0.85em;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
 }
 .chat-msg-content th,
 .chat-msg-content td {
@@ -1617,6 +1641,81 @@ tr:hover .portfolio-remove-btn {
 }
 
 /* ===== Input Bar ===== */
+/* HITL confirmation bar */
+.chat-confirm-bar {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+
+.chat-confirm-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.chat-confirm-tool {
+  margin-bottom: 6px;
+}
+
+.chat-confirm-tool-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  font-family: var(--font-mono, monospace);
+}
+
+.chat-confirm-tool-args {
+  font-size: 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 120px;
+  overflow-y: auto;
+  color: var(--text-secondary);
+}
+
+.chat-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.chat-confirm-btn {
+  flex: 1;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: background 0.15s, color 0.15s;
+}
+
+.chat-confirm-yes {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.chat-confirm-yes:hover {
+  filter: brightness(1.1);
+}
+
+.chat-confirm-no {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.chat-confirm-no:hover {
+  background: var(--bg);
+}
+
 .chat-input-bar {
   display: flex;
   gap: 8px;
@@ -1822,6 +1921,16 @@ tr:hover .portfolio-remove-btn {
   border-color: var(--accent);
   color: #fff;
   font-weight: 600;
+}
+
+.settings-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-option:disabled:hover {
+  border-color: var(--border);
+  color: var(--text-muted);
 }
 
 /* ===== Trade History Summary ===== */

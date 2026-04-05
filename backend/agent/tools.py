@@ -360,13 +360,18 @@ def get_okx_dual_investment_products(coin: str, direction: str = "buy_low") -> s
         return f"Error fetching OKX Dual Investment products: {e}"
 
 
-ALL_TOOLS = [
+OPTIONS_TOOLS = [
     get_stock_price,
     get_options_chain,
     sell_put_analysis,
     get_volatility_summary,
     get_earnings_dates,
     analyze_single_leg_option,
+]
+
+CRYPTO_TOOLS = [
     get_dual_investment_products,
     get_okx_dual_investment_products,
 ]
+
+ALL_TOOLS = OPTIONS_TOOLS + CRYPTO_TOOLS

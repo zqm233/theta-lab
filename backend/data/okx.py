@@ -1,7 +1,7 @@
-"""OKX Dual Investment API client.
+"""OKX API client.
 
-Fetches product listings from OKX's /api/v5/finance/sfp/dcd/* endpoints
-using HMAC-SHA256 signed requests.
+Covers Dual Investment (DCD) product listings, funding account balance,
+and DCD order queries via OKX REST API with HMAC-SHA256 signed requests.
 """
 
 from __future__ import annotations
@@ -23,7 +23,9 @@ OKX_BASE_URL = "https://www.okx.com"
 
 _product_cache: dict[str, Any] = {}
 _pairs_cache: dict[str, Any] = {"data": None, "ts": 0.0}
+_balance_cache: dict[str, Any] = {}
 _CACHE_TTL = 120
+_BALANCE_CACHE_TTL = 30
 
 
 class OkxConfigError(Exception):
@@ -158,6 +160,7 @@ def get_dual_investment_products(
             "settleDate": settle_date,
             "minAmount": float(p.get("minSize", 0)),
             "maxAmount": float(p.get("maxSize", 0)),
+            "stepSize": float(p.get("stepSz", 0)) or float(p.get("minSize", 0)) or 0.0001,
             "canPurchase": can_purchase,
         })
 
@@ -180,6 +183,98 @@ def get_dual_investment_summary(base_ccy: str = "BTC", quote_ccy: str = "USDT") 
         "sellHighCount": len(sell_high),
         "fetchedAt": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def get_funding_balance(ccy: str = "") -> list[dict[str, Any]]:
+    """Fetch funding account balances from OKX.
+
+    Args:
+        ccy: Optional currency filter (e.g. "USDT"). Empty returns all.
+
+    Returns:
+        List of {ccy, bal, availBal, frozenBal}.
+    """
+    cache_key = f"balance:{ccy}"
+    cached = _balance_cache.get(cache_key)
+    if cached and time.time() - cached["ts"] < _BALANCE_CACHE_TTL:
+        return cached["data"]
+
+    params = {}
+    if ccy:
+        params["ccy"] = ccy.upper()
+    result = _signed_get("/api/v5/asset/balances", params or None)
+    raw = result.get("data", [])
+
+    normalized = []
+    for item in raw:
+        normalized.append({
+            "ccy": item.get("ccy", ""),
+            "bal": float(item.get("bal", 0)),
+            "availBal": float(item.get("availBal", 0)),
+            "frozenBal": float(item.get("frozenBal", 0)),
+        })
+
+    _balance_cache[cache_key] = {"data": normalized, "ts": time.time()}
+    return normalized
+
+
+def get_dcd_orders(state: str = "") -> list[dict[str, Any]]:
+    """Fetch DCD (Dual Currency Deposit) orders from OKX.
+
+    Args:
+        state: Optional filter — "live", "filled", "expired", "canceled".
+               Empty returns all recent orders.
+
+    Returns:
+        List of normalized order dicts.
+    """
+    params: dict[str, str] = {}
+    if state:
+        params["state"] = state
+
+    result = _signed_get("/api/v5/finance/sfp/dcd/order-history", params or None)
+    raw = result.get("data", [])
+    orders_list = raw.get("orders", []) if isinstance(raw, dict) else raw
+
+    normalized = []
+    for o in orders_list:
+        settle_ts = int(o.get("settleTime", 0) or o.get("expTime", 0) or 0)
+        settle_date = (
+            datetime.fromtimestamp(settle_ts / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            if settle_ts
+            else ""
+        )
+        create_ts = int(o.get("cTime", 0))
+        create_time = (
+            datetime.fromtimestamp(create_ts / 1000, tz=timezone.utc).strftime(
+                "%Y-%m-%d %H:%M"
+            )
+            if create_ts
+            else ""
+        )
+
+        product_id = o.get("productId", "")
+        parts = product_id.split("-") if product_id else []
+        coin = parts[0] if parts else ""
+        opt_type = parts[-1] if len(parts) >= 5 else ""
+        direction = "buy_low" if opt_type == "P" else "sell_high"
+
+        normalized.append({
+            "ordId": o.get("ordId", ""),
+            "productId": product_id,
+            "coin": coin,
+            "direction": direction,
+            "strikePrice": float(o.get("strike", 0)),
+            "apr": float(o.get("annualizedYield", 0)),
+            "aprPercent": round(float(o.get("annualizedYield", 0)) * 100, 2),
+            "investAmt": float(o.get("notionalSz", 0) or o.get("investAmt", 0)),
+            "investCcy": o.get("notionalCcy", ""),
+            "state": o.get("state", ""),
+            "settleDate": settle_date,
+            "createTime": create_time,
+        })
+
+    return normalized
 
 
 def check_okx_configured() -> bool:

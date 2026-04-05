@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import { useSettings } from "../settings";
 import { API_BASE } from "../hooks/useApi";
@@ -6,7 +6,7 @@ import { API_BASE } from "../hooks/useApi";
 const INTERVAL_OPTIONS = [15, 30, 60, 120, 300];
 const LLM_PROVIDERS = ["google", "openai", "anthropic", "custom"];
 const LLM_PROVIDER_LABELS: Record<string, string> = {
-  google: "Google Gemini",
+  google: "Gemini",
   openai: "OpenAI",
   anthropic: "Anthropic",
   custom: "Custom",
@@ -28,6 +28,15 @@ export default function Settings() {
   const [llmSaving, setLlmSaving] = useState(false);
   const [llmToast, setLlmToast] = useState<string | null>(null);
   const [llmSaved, setLlmSaved] = useState({ provider: "", model: "", baseUrl: "" });
+  const [llmTesting, setLlmTesting] = useState(false);
+  const [llmTestResult, setLlmTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [llmVerified, _setLlmVerified] = useState(() => localStorage.getItem("llmVerified") === "1");
+  const setLlmVerified = useCallback((v: boolean) => {
+    _setLlmVerified(v);
+    v ? localStorage.setItem("llmVerified", "1") : localStorage.removeItem("llmVerified");
+  }, []);
+  const [llmKeyFocused, setLlmKeyFocused] = useState(false);
+  const providerDrafts = useRef<Record<string, { model: string; baseUrl: string; apiKey: string }>>({}); 
 
   useEffect(() => {
     fetch(`${API_BASE}/llm/config`)
@@ -47,23 +56,31 @@ export default function Settings() {
   }, []);
 
   const isCustom = llmProvider === "custom";
+  const llmLocked = !!llmConfigured && !llmEditing;
+
+  const handleLlmEdit = useCallback(() => {
+    setLlmEditing(true);
+    setLlmVerified(false);
+  }, []);
 
   const handleProviderChange = useCallback((p: string) => {
+    providerDrafts.current[llmProvider] = { model: llmModel, baseUrl: llmBaseUrl, apiKey: llmApiKey };
     setLlmProvider(p);
-    if (p !== llmSaved.provider) {
+    const draft = providerDrafts.current[p];
+    if (draft) {
+      setLlmModel(draft.model);
+      setLlmBaseUrl(draft.baseUrl);
+      setLlmApiKey(draft.apiKey);
+    } else if (p === llmSaved.provider) {
+      setLlmModel(llmSaved.model);
+      setLlmBaseUrl(llmSaved.baseUrl);
+      setLlmApiKey("");
+    } else {
       setLlmModel("");
       setLlmBaseUrl("");
       setLlmApiKey("");
     }
-  }, [llmSaved.provider]);
-
-  const handleLlmCancel = useCallback(() => {
-    setLlmEditing(false);
-    setLlmProvider(llmSaved.provider);
-    setLlmModel(llmSaved.model);
-    setLlmBaseUrl(llmSaved.baseUrl);
-    setLlmApiKey("");
-  }, [llmSaved]);
+  }, [llmProvider, llmModel, llmBaseUrl, llmApiKey, llmSaved]);
 
   const saveLlmConfig = useCallback(async () => {
     setLlmSaving(true);
@@ -82,7 +99,9 @@ export default function Settings() {
         setLlmConfigured(true);
         setLlmEditing(false);
         setLlmApiKey("");
+        setLlmVerified(false);
         setLlmSaved({ provider: llmProvider, model: llmModel.trim(), baseUrl: llmBaseUrl.trim() });
+        providerDrafts.current = {};
         setLlmToast(t("llmConfigSaved"));
         setTimeout(() => setLlmToast(null), 3000);
       }
@@ -93,8 +112,27 @@ export default function Settings() {
     }
   }, [llmProvider, isCustom, llmModel, llmApiKey, llmBaseUrl, t]);
 
-  const llmLocked = !!llmConfigured && !llmEditing;
-  const llmDirty = llmEditing && (llmProvider !== llmSaved.provider || llmModel !== llmSaved.model);
+  const testLlmConnection = useCallback(async () => {
+    setLlmTesting(true);
+    setLlmTestResult(null);
+    try {
+      const res = await fetch(`${API_BASE}/llm/test`, { method: "POST" });
+      const d = await res.json();
+      if (d.ok) {
+        setLlmVerified(true);
+        setLlmTestResult({ ok: true, msg: `${t("llmTestOk")} (${d.latency_ms}ms)` });
+      } else {
+        setLlmVerified(false);
+        setLlmTestResult({ ok: false, msg: d.error || t("llmTestFail") });
+      }
+    } catch {
+      setLlmVerified(false);
+      setLlmTestResult({ ok: false, msg: t("llmTestFail") });
+    } finally {
+      setLlmTesting(false);
+      setTimeout(() => setLlmTestResult(null), 6000);
+    }
+  }, [t]);
 
   // Binance
   const [binanceKey, setBinanceKey] = useState("");
@@ -113,6 +151,12 @@ export default function Settings() {
   const [okxSaving, setOkxSaving] = useState(false);
   const [okxToast, setOkxToast] = useState<string | null>(null);
 
+  // OKX MCP
+  const [mcpAccess, setMcpAccess] = useState<"readonly" | "full">("readonly");
+  const [mcpToolCount, setMcpToolCount] = useState<number | null>(null);
+  const [mcpSaving, setMcpSaving] = useState(false);
+  const [mcpToast, setMcpToast] = useState<string | null>(null);
+
   useEffect(() => {
     fetch(`${API_BASE}/dual-invest/status`)
       .then((r) => (r.ok ? r.json() : { binance: false, okx: false }))
@@ -124,6 +168,15 @@ export default function Settings() {
         setBinanceConfigured(false);
         setOkxConfigured(false);
       });
+
+    fetch(`${API_BASE}/okx-mcp/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) {
+          setMcpAccess(d.access === "full" ? "full" : "readonly");
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const saveBinanceKeys = useCallback(async () => {
@@ -184,6 +237,28 @@ export default function Settings() {
     }
   }, [okxKey, okxSecret, okxPassphrase, t]);
 
+  const saveMcpConfig = useCallback(async (access: "readonly" | "full") => {
+    setMcpAccess(access);
+    setMcpSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/okx-mcp/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setMcpToolCount(d.toolCount ?? null);
+        setMcpToast(t("okxMcpSaved"));
+        setTimeout(() => setMcpToast(null), 3000);
+      }
+    } catch {
+      /* silent */
+    } finally {
+      setMcpSaving(false);
+    }
+  }, [t]);
+
   const binanceLocked = !!binanceConfigured && !binanceEditing;
   const okxLocked = !!okxConfigured && !okxEditing;
 
@@ -193,87 +268,101 @@ export default function Settings() {
 
       {/* LLM Configuration */}
       <div className="settings-section">
-        <label className="settings-label">{t("llmConfig")}</label>
+        <label className="settings-label">
+          {t("llmConfig")}
+          {llmVerified && (
+            <span style={{ marginLeft: 8, fontSize: "0.78rem", color: "#22c55e", fontWeight: 400 }}>
+              ● {t("llmAvailable")}
+            </span>
+          )}
+        </label>
         <p className="settings-desc">{t("llmConfigDesc")}</p>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-          <span className={`market-status-dot ${llmConfigured && !llmDirty ? "active" : "closed"}`} />
-          <span style={{ fontSize: "0.85rem" }}>
-            {llmConfigured && !llmDirty
-              ? `${llmSaved.provider === "custom" ? (llmSaved.baseUrl || "Custom") : (LLM_PROVIDER_LABELS[llmSaved.provider] || llmSaved.provider)} — ${llmSaved.model}`
-              : t("llmNotConfigured")}
-          </span>
-          {llmLocked && isCustom && llmBaseUrl && (
-            <span style={{ fontSize: "0.75rem", opacity: 0.6 }}>({llmBaseUrl})</span>
-          )}
-          {llmLocked && (
-            <button
-              className="settings-option"
-              style={{ marginLeft: 8, padding: "2px 10px", fontSize: "0.75rem" }}
-              onClick={() => setLlmEditing(true)}
-            >
-              {t("reconfigure")}
-            </button>
-          )}
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", gap: 8 }}>
-            {LLM_PROVIDERS.map((p) => (
-              <button
-                key={p}
-                className={`settings-option${llmProvider === p ? " active" : ""}`}
-                onClick={() => !llmLocked && handleProviderChange(p)}
-                disabled={llmLocked}
-              >
-                {LLM_PROVIDER_LABELS[p] || p}
-              </button>
-            ))}
-          </div>
-          <input
-            className="add-form-input"
-            placeholder={t("llmModelPlaceholder")}
-            value={llmModel}
-            onChange={(e) => setLlmModel(e.target.value)}
-            disabled={llmLocked}
-            autoComplete="off"
-          />
-          <input
-            className="add-form-input"
-            type="password"
-            placeholder={t("llmApiKey")}
-            value={llmLocked ? MASKED : llmApiKey}
-            onChange={(e) => setLlmApiKey(e.target.value)}
-            disabled={llmLocked}
-            autoComplete="off"
-          />
-          {isCustom && (
-            <input
-              className="add-form-input"
-              placeholder={t("llmBaseUrlRequired")}
-              value={llmBaseUrl}
-              onChange={(e) => setLlmBaseUrl(e.target.value)}
-              disabled={llmLocked}
-              autoComplete="off"
-            />
-          )}
-          {!llmLocked && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label style={{ fontSize: "0.78rem", opacity: 0.5, display: "block", marginBottom: 4 }}>{t("llmProvider")}</label>
             <div style={{ display: "flex", gap: 8 }}>
-              <button
-                className="add-form-submit"
-                onClick={saveLlmConfig}
-                disabled={llmSaving || !llmModel.trim() || !llmApiKey.trim() || (isCustom && !llmBaseUrl.trim())}
-                style={{ maxWidth: 200 }}
-              >
-                {t("save")}
-              </button>
-              {llmEditing && (
+              {LLM_PROVIDERS.map((p) => (
                 <button
-                  className="settings-option"
-                  onClick={handleLlmCancel}
-                  style={{ padding: "6px 16px" }}
+                  key={p}
+                  className={`settings-option${llmProvider === p ? " active" : ""}`}
+                  onClick={() => !llmLocked && handleProviderChange(p)}
+                  disabled={llmLocked}
                 >
-                  {t("cancel")}
+                  {LLM_PROVIDER_LABELS[p] || p}
                 </button>
-              )}
+              ))}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: "0.78rem", opacity: 0.5, display: "block", marginBottom: 4 }}>{t("llmModel")}</label>
+              <input
+                className="add-form-input"
+                placeholder={t("llmModelPlaceholder")}
+                value={llmModel}
+                onChange={(e) => setLlmModel(e.target.value)}
+                disabled={llmLocked}
+                autoComplete="off"
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: "0.78rem", opacity: 0.5, display: "block", marginBottom: 4 }}>{t("llmApiKey")}</label>
+              <input
+                className="add-form-input"
+                type={llmLocked || (!llmKeyFocused && llmConfigured && !llmApiKey) ? "text" : "password"}
+                placeholder={t("llmApiKey")}
+                value={llmLocked ? "••••••••" : (!llmKeyFocused && llmConfigured && !llmApiKey ? "••••••••" : llmApiKey)}
+                onFocus={() => setLlmKeyFocused(true)}
+                onBlur={() => setLlmKeyFocused(false)}
+                onChange={(e) => setLlmApiKey(e.target.value)}
+                disabled={llmLocked}
+                autoComplete="off"
+              />
+            </div>
+          </div>
+          {isCustom && (
+            <div>
+              <label style={{ fontSize: "0.78rem", opacity: 0.5, display: "block", marginBottom: 4 }}>{t("llmBaseUrl")}</label>
+              <input
+                className="add-form-input"
+                placeholder={t("llmBaseUrlRequired")}
+                value={llmBaseUrl}
+                onChange={(e) => setLlmBaseUrl(e.target.value)}
+                disabled={llmLocked}
+                autoComplete="off"
+              />
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              className={llmLocked ? "add-form-submit llm-edit-btn" : "add-form-submit"}
+              onClick={llmLocked ? handleLlmEdit : saveLlmConfig}
+              disabled={!llmLocked && (llmSaving || !llmModel.trim() || (!llmConfigured && !llmApiKey.trim()) || (isCustom && !llmBaseUrl.trim()))}
+              style={{ maxWidth: 200, padding: "6px 24px" }}
+            >
+              {llmLocked ? t("llmEdit") : t("save")}
+            </button>
+            {llmConfigured && (
+              <button
+                className="settings-option"
+                onClick={testLlmConnection}
+                disabled={llmTesting}
+                style={{ padding: "6px 16px" }}
+              >
+                {llmTesting ? t("llmTesting") : t("llmTestBtn")}
+              </button>
+            )}
+          </div>
+          {llmTestResult && (
+            <div style={{
+              fontSize: "0.82rem",
+              color: llmTestResult.ok ? "#22c55e" : "#ef4444",
+              padding: "8px 12px",
+              borderRadius: 6,
+              background: llmTestResult.ok ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
+              wordBreak: "break-word",
+            }}>
+              {llmTestResult.msg}
             </div>
           )}
         </div>
@@ -435,9 +524,45 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* OKX MCP Access */}
+      <div className="settings-section">
+        <label className="settings-label">{t("okxMcpConfig")}</label>
+        <p className="settings-desc">{t("okxMcpConfigDesc")}</p>
+
+        {mcpToolCount !== null && (
+          <div style={{ fontSize: "0.85rem", marginBottom: 10, opacity: 0.7 }}>
+            {t("okxMcpToolCount")}: {mcpToolCount}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          <button
+            className={`settings-option${mcpAccess === "readonly" ? " active" : ""}`}
+            onClick={() => saveMcpConfig("readonly")}
+            disabled={mcpSaving}
+          >
+            {t("okxMcpAccessReadonly")}
+          </button>
+          <button
+            className={`settings-option${mcpAccess === "full" ? " active" : ""}`}
+            onClick={() => saveMcpConfig("full")}
+            disabled={mcpSaving}
+          >
+            {t("okxMcpAccessFull")}
+          </button>
+        </div>
+
+        {mcpAccess === "full" && (
+          <p style={{ fontSize: "0.82rem", color: "var(--color-danger, #e74c3c)", margin: "0 0 8px" }}>
+            {t("okxMcpFullWarning")}
+          </p>
+        )}
+      </div>
+
       {llmToast && <div className="toast">{llmToast}</div>}
       {binanceToast && <div className="toast">{binanceToast}</div>}
       {okxToast && <div className="toast">{okxToast}</div>}
+      {mcpToast && <div className="toast">{mcpToast}</div>}
     </div>
   );
 }

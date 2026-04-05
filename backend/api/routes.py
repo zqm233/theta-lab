@@ -1079,36 +1079,24 @@ async def chat(request: ChatRequest):
     agent = _get_agent()
     thread_id = request.thread_id or str(uuid.uuid4())
 
-    _sentinel = object()
-
     async def event_stream() -> AsyncGenerator[dict, None]:
         yield {"event": "thread_id", "data": json.dumps({"thread_id": thread_id})}
-        queue: asyncio.Queue = asyncio.Queue()
-
-        def _run_sync_stream():
-            try:
-                for chunk in agent.stream(
-                    request.message,
-                    thread_id=thread_id,
-                    user_id=request.user_id,
-                ):
-                    queue.put_nowait(chunk)
-            except Exception as exc:
-                queue.put_nowait(exc)
-            finally:
-                queue.put_nowait(_sentinel)
-
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, _run_sync_stream)
-
         try:
-            while True:
-                item = await queue.get()
-                if item is _sentinel:
-                    break
-                if isinstance(item, Exception):
-                    raise item
-                yield {"event": "token", "data": json.dumps({"content": item})}
+            async for item in agent.astream(
+                request.message,
+                thread_id=thread_id,
+                user_id=request.user_id,
+            ):
+                if item["type"] == "token":
+                    yield {"event": "token", "data": json.dumps({"content": item["content"]})}
+                elif item["type"] == "confirm":
+                    yield {
+                        "event": "confirm",
+                        "data": json.dumps({
+                            "thread_id": thread_id,
+                            "tool_calls": item["tool_calls"],
+                        }),
+                    }
             yield {"event": "done", "data": json.dumps({"status": "ok"})}
         except Exception as exc:
             logger.exception("Chat stream error")
@@ -1120,10 +1108,49 @@ async def chat(request: ChatRequest):
     return EventSourceResponse(event_stream())
 
 
-@router.get("/chat/history/{thread_id}")
-def get_chat_history(thread_id: str):
+class ConfirmRequest(BaseModel):
+    thread_id: str
+    approved: bool
+    user_id: str = "default"
+
+
+@router.post("/chat/confirm")
+async def chat_confirm(request: ConfirmRequest):
+    """Resume agent execution after human-in-the-loop confirmation."""
     agent = _get_agent()
-    history = agent.get_history(thread_id)
+
+    async def event_stream() -> AsyncGenerator[dict, None]:
+        try:
+            async for item in agent.astream_resume(
+                thread_id=request.thread_id,
+                user_id=request.user_id,
+                approved=request.approved,
+            ):
+                if item["type"] == "token":
+                    yield {"event": "token", "data": json.dumps({"content": item["content"]})}
+                elif item["type"] == "confirm":
+                    yield {
+                        "event": "confirm",
+                        "data": json.dumps({
+                            "thread_id": request.thread_id,
+                            "tool_calls": item["tool_calls"],
+                        }),
+                    }
+            yield {"event": "done", "data": json.dumps({"status": "ok"})}
+        except Exception as exc:
+            logger.exception("Chat confirm stream error")
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(exc)}),
+            }
+
+    return EventSourceResponse(event_stream())
+
+
+@router.get("/chat/history/{thread_id}")
+async def get_chat_history(thread_id: str):
+    agent = _get_agent()
+    history = await agent.get_history(thread_id)
     return {"thread_id": thread_id, "messages": history}
 
 
@@ -1230,6 +1257,39 @@ def dual_invest_configure(body: dict):
         return {"exchange": "binance", "configured": check_binance_configured()}
 
 
+# ── OKX Account & DCD Orders ─────────────────────────────────────────
+
+
+@router.get("/okx/balance")
+def okx_balance(ccy: str = Query("", description="Currency filter, e.g. USDT")):
+    """Return OKX funding account balance."""
+    from backend.data.okx import OkxConfigError, get_funding_balance
+
+    try:
+        balances = get_funding_balance(ccy)
+        return {"balances": balances}
+    except OkxConfigError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.exception("OKX balance error")
+        raise HTTPException(502, f"OKX API error: {e}")
+
+
+@router.get("/okx/dcd/orders")
+def okx_dcd_orders(state: str = Query("", description="live, filled, expired, canceled")):
+    """Return OKX DCD orders."""
+    from backend.data.okx import OkxConfigError, get_dcd_orders
+
+    try:
+        orders = get_dcd_orders(state)
+        return {"orders": orders}
+    except OkxConfigError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.exception("OKX DCD orders error")
+        raise HTTPException(502, f"OKX API error: {e}")
+
+
 # ── LLM Configuration ──────────────────────────────────────────────
 
 _SUPPORTED_PROVIDERS = ["google", "openai", "anthropic"]
@@ -1309,4 +1369,68 @@ def set_llm_config(body: LLMConfigRequest):
         "model": body.model.strip(),
         "baseUrl": body.baseUrl.strip(),
         "configured": has_key,
+    }
+
+
+@router.post("/llm/test")
+async def test_llm_connection():
+    """Send a minimal prompt to verify LLM connectivity and return latency."""
+    import time
+    from backend.agent.agent import _create_llm
+
+    try:
+        llm = _create_llm()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    start = time.monotonic()
+    try:
+        resp = await llm.ainvoke("Say OK")
+        latency_ms = int((time.monotonic() - start) * 1000)
+        content = resp.content if hasattr(resp, "content") else str(resp)
+        return {"ok": True, "latency_ms": latency_ms, "reply": content[:100]}
+    except Exception as e:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        msg = str(e)
+        if len(msg) > 300:
+            msg = msg[:300] + "..."
+        return {"ok": False, "latency_ms": latency_ms, "error": msg}
+
+
+# ── OKX MCP Configuration ────────────────────────────────────────
+
+@router.get("/okx-mcp/config")
+def get_okx_mcp_config():
+    """Return current OKX MCP access level."""
+    from backend.agent.mcp_tools import DEFAULT_ACCESS
+    access = os.environ.get("OKX_MCP_ACCESS", DEFAULT_ACCESS)
+    return {"access": access}
+
+
+class OkxMcpConfigRequest(BaseModel):
+    access: str = "readonly"
+
+
+@router.post("/okx-mcp/config")
+async def set_okx_mcp_config(body: OkxMcpConfigRequest):
+    """Update OKX MCP access level, then reload tools."""
+    from pathlib import Path
+    from backend.agent.mcp_tools import reinit_mcp_tools
+    from backend.app import reset_agent
+
+    if body.access not in ("readonly", "full"):
+        raise HTTPException(400, "access must be 'readonly' or 'full'")
+
+    os.environ["OKX_MCP_ACCESS"] = body.access
+
+    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    _persist_env(env_path, {"OKX_MCP_ACCESS": body.access})
+
+    tools = await reinit_mcp_tools()
+    reset_agent()
+
+    return {
+        "access": body.access,
+        "toolCount": len(tools),
+        "tools": [t.name for t in tools],
     }

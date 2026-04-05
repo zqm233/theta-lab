@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE } from "../hooks/useApi";
 import { useChatBridge } from "../chatBridge";
 import { useI18n } from "../i18n";
+import { formatUsMarketTime } from "../usMarketTime";
 
 interface Product {
   id: string;
@@ -17,7 +18,23 @@ interface Product {
   settleDate: string;
   minAmount: number;
   maxAmount: number;
+  stepSize: number;
   canPurchase: boolean;
+}
+
+interface DcdOrder {
+  ordId: string;
+  productId: string;
+  coin: string;
+  direction: string;
+  strikePrice: number;
+  apr: number;
+  aprPercent: number;
+  investAmt: number;
+  investCcy: string;
+  state: string;
+  settleDate: string;
+  createTime: string;
 }
 
 interface CtxMenu {
@@ -46,8 +63,17 @@ export default function DualInvestment() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [spotPrice, setSpotPrice] = useState<number | null>(null);
+  const [spotUpdatedAt, setSpotUpdatedAt] = useState<Date | null>(null);
+  const [quoteRefreshing, setQuoteRefreshing] = useState(false);
+  const [availBal, setAvailBal] = useState<number | null>(null);
+  const [balCcy, setBalCcy] = useState("");
+  const [dcdOrders, setDcdOrders] = useState<DcdOrder[]>([]);
+  const [ordersExpanded, setOrdersExpanded] = useState(true);
+  const [subModal, setSubModal] = useState<Product | null>(null);
+  const [subPct, setSubPct] = useState(50);
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const coinMountRef = useRef(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/dual-invest/status`)
@@ -94,19 +120,94 @@ export default function DualInvestment() {
   }, [statusLoaded, isConfigured, coin, direction, exchange, fetchProducts]);
 
   useEffect(() => {
+    if (coinMountRef.current) {
+      setSpotPrice(null);
+      setSpotUpdatedAt(null);
+    }
+    coinMountRef.current = true;
+  }, [coin]);
+
+  const fetchSpot = useCallback(
+    async (silent = false) => {
+      if (silent) setQuoteRefreshing(true);
+      try {
+        const r = await fetch(`${API_BASE}/quote?ticker=${coin}&market=crypto`);
+        const d = r.ok ? await r.json() : null;
+        if (d?.price != null && Number.isFinite(d.price)) {
+          setSpotPrice(d.price);
+          setSpotUpdatedAt(new Date());
+        }
+      } catch {
+        /* silent for rate limits */
+      } finally {
+        setQuoteRefreshing(false);
+      }
+    },
+    [coin]
+  );
+
+  useEffect(() => {
+    fetchSpot(false);
+    const timer = setInterval(() => {
+      fetchSpot(true);
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [coin, fetchSpot]);
+
+  const formatSpotTime = (d: Date) =>
+    `${formatUsMarketTime(d, lang)}${t("marketTimeEt")}`;
+
+  const investCoin = direction === "buy_low" ? "USDT" : coin;
+
+  useEffect(() => {
+    if (exchange !== "okx" || !isConfigured) {
+      setAvailBal(null);
+      setBalCcy("");
+      return;
+    }
     let cancelled = false;
-    const fetchSpot = () => {
-      fetch(`${API_BASE}/quote?ticker=${coin}&market=crypto`)
+    const load = () => {
+      fetch(`${API_BASE}/okx/balance?ccy=${investCoin}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
-          if (!cancelled && d?.price) setSpotPrice(d.price);
+          if (cancelled || !d?.balances) return;
+          const entry = d.balances.find(
+            (b: { ccy: string }) => b.ccy === investCoin
+          );
+          if (entry) {
+            setAvailBal(entry.availBal);
+            setBalCcy(entry.ccy);
+          } else {
+            setAvailBal(0);
+            setBalCcy(investCoin);
+          }
         })
         .catch(() => {});
     };
-    fetchSpot();
-    const timer = setInterval(fetchSpot, 15_000);
+    load();
+    const timer = setInterval(load, 30_000);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [coin]);
+  }, [exchange, isConfigured, investCoin]);
+
+  const fetchOrders = useCallback(() => {
+    if (exchange !== "okx" || !isConfigured) return;
+    fetch(`${API_BASE}/okx/dcd/orders?state=live`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.orders) setDcdOrders(d.orders);
+      })
+      .catch(() => {});
+  }, [exchange, isConfigured]);
+
+  useEffect(() => {
+    if (exchange !== "okx" || !isConfigured) {
+      setDcdOrders([]);
+      return;
+    }
+    fetchOrders();
+    const timer = setInterval(fetchOrders, 30_000);
+    return () => clearInterval(timer);
+  }, [exchange, isConfigured, fetchOrders]);
 
   const settleDates = useMemo(() => {
     const dates = [...new Set(products.map((p) => p.settleDate))];
@@ -120,8 +221,6 @@ export default function DualInvestment() {
     if (!activSettle) return products;
     return products.filter((p) => p.settleDate === activSettle);
   }, [products, activSettle]);
-
-  const activeDuration = filteredProducts.length > 0 ? filteredProducts[0].duration : null;
 
   useEffect(() => {
     if (!ctxMenu) return;
@@ -151,8 +250,8 @@ export default function DualInvestment() {
     const spot = spotPrice ? `$${spotPrice.toLocaleString()}` : "unknown";
     const prompt =
       lang === "zh"
-        ? `分析这个 ${p.coin} ${dir === "Buy Low" ? "低买" : "高卖"} 双币投资产品：行权价 $${p.strikePrice.toLocaleString()}，APR ${p.aprPercent.toFixed(2)}%，期限 ${p.duration} 天，交割日 ${p.settleDate}，当前现货价 ${spot}。值得买吗？风险如何？`
-        : `Analyze this ${p.coin} ${dir} dual investment: strike $${p.strikePrice.toLocaleString()}, APR ${p.aprPercent.toFixed(2)}%, ${p.duration} days, settle ${p.settleDate}, current spot ${spot}. Is it worth it? What are the risks?`;
+        ? `分析这个 ${p.coin} ${dir === "Buy Low" ? "低买" : "高卖"} 双币投资产品：行权价 $${p.strikePrice.toLocaleString()}，APR ${p.aprPercent.toFixed(2)}%，期限 ${p.duration} 天，交割日 ${p.settleDate}，当前现货价 ${spot}。值得买吗？风险如何？（请直接基于以上数据分析，不要调用工具查询）`
+        : `Analyze this ${p.coin} ${dir} dual investment: strike $${p.strikePrice.toLocaleString()}, APR ${p.aprPercent.toFixed(2)}%, ${p.duration} days, settle ${p.settleDate}, current spot ${spot}. Is it worth it? What are the risks? (Analyze directly with the data above, do not call any tools)`;
     submitToChat(prompt);
     setCtxMenu(null);
   };
@@ -161,6 +260,44 @@ export default function DualInvestment() {
     if (!ctxMenu) return;
     sendToChat(formatProductLine(ctxMenu.product));
     setCtxMenu(null);
+  };
+
+  const handleSubscribe = () => {
+    if (!ctxMenu) return;
+    setSubModal(ctxMenu.product);
+    setSubPct(50);
+    setCtxMenu(null);
+  };
+
+  const subBal = availBal ?? 0;
+  const subRawAmt = subModal ? subBal * (subPct / 100) : 0;
+  const subStep = subModal?.stepSize || 0.0001;
+  const subAmount = subModal
+    ? Math.min(Math.max(Math.floor(subRawAmt / subStep) * subStep, subModal.minAmount), subModal.maxAmount)
+    : 0;
+  const subYield = subModal
+    ? subAmount * (subModal.aprPercent / 100) * (subModal.duration / 365)
+    : 0;
+
+  const confirmSubscribe = () => {
+    if (!subModal) return;
+    const p = subModal;
+    const dir = p.direction === "buy_low" ? "低买" : "高卖";
+    const amt = subAmount.toLocaleString(undefined, { maximumFractionDigits: 8 });
+    const prompt =
+      lang === "zh"
+        ? `帮我申购双币赢：${p.id}，投入 ${amt} ${p.investCoin}，${p.coin} ${dir}，行权价 $${p.strikePrice.toLocaleString()}，APR ${p.aprPercent.toFixed(2)}%，期限 ${p.duration} 天。`
+        : `Subscribe to DCD: ${p.id}, invest ${amt} ${p.investCoin}, ${p.coin} ${p.direction === "buy_low" ? "Buy Low" : "Sell High"}, strike $${p.strikePrice.toLocaleString()}, APR ${p.aprPercent.toFixed(2)}%, ${p.duration} days.`;
+    submitToChat(prompt);
+    setSubModal(null);
+  };
+
+  const handleRedeem = (order: DcdOrder) => {
+    const prompt =
+      lang === "zh"
+        ? `帮我提前赎回这个双币赢订单：订单号 ${order.ordId}，产品 ${order.productId}，投入 ${order.investAmt} ${order.investCcy}。`
+        : `Redeem this DCD order early: order ID ${order.ordId}, product ${order.productId}, invested ${order.investAmt} ${order.investCcy}.`;
+    submitToChat(prompt);
   };
 
   const cushion = (strike: number) => {
@@ -192,14 +329,37 @@ export default function DualInvestment() {
       <header className="chain-header">
         <div className="chain-header-left">
           <h2 className="chain-ticker">{t("navDualInvest")}</h2>
+        </div>
+        <div className="chain-meta">
           {spotPrice != null && (
-            <span className="chain-spot-price">
+            <span style={{ fontSize: "0.9rem" }}>
               {coin}{" "}
               <span style={{ fontWeight: 700 }}>
                 ${spotPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </span>
             </span>
           )}
+          {exchange === "okx" && availBal != null && (
+            <span style={{ fontSize: "0.82rem", opacity: 0.6, borderLeft: "1px solid var(--border)", paddingLeft: 12 }}>
+              {t("dualBalance")}: {availBal.toLocaleString(undefined, { maximumFractionDigits: 4 })} {balCcy}
+            </span>
+          )}
+          <div className="chain-refresh-bar">
+            {spotUpdatedAt && (
+              <span className="portfolio-updated-at">
+                {t("lastUpdated")} {formatSpotTime(spotUpdatedAt)}
+              </span>
+            )}
+            <button
+              type="button"
+              className="portfolio-refresh-btn"
+              onClick={() => fetchSpot(true)}
+              disabled={quoteRefreshing}
+              title={t("refresh")}
+            >
+              {quoteRefreshing ? "⟳" : "↻"}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -332,6 +492,67 @@ export default function DualInvestment() {
         </div>
       )}
 
+      {exchange === "okx" && isConfigured && (
+        <div className="settings-section" style={{ marginTop: 16 }}>
+          <div
+            style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
+            onClick={() => setOrdersExpanded((v) => !v)}
+          >
+            <span style={{ fontSize: "0.7rem", opacity: 0.5 }}>{ordersExpanded ? "▼" : "▶"}</span>
+            <label className="settings-label" style={{ margin: 0, cursor: "pointer" }}>
+              {t("dualMyOrders")} ({dcdOrders.length})
+            </label>
+          </div>
+          {ordersExpanded && (
+            dcdOrders.length === 0 ? (
+              <div className="portfolio-empty" style={{ padding: "12px 0" }}>
+                {t("dualNoOrders")}
+              </div>
+            ) : (
+              <div className="table-container" style={{ marginTop: 8 }}>
+                <table className="chain-table align-left">
+                  <thead>
+                    <tr>
+                      <th>{t("dualInvestCoin")}</th>
+                      <th>{t("colStrike")}</th>
+                      <th>APR</th>
+                      <th>{t("dualOrderAmt")}</th>
+                      <th>{t("dualSettleDate")}</th>
+                      <th>{t("dualOrderState")}</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dcdOrders.map((o) => (
+                      <tr key={o.ordId}>
+                        <td>{o.coin} {o.direction === "buy_low" ? "↓" : "↑"}</td>
+                        <td>{o.strikePrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                        <td style={{ color: "var(--green)", fontWeight: 600 }}>
+                          {o.aprPercent.toFixed(2)}%
+                        </td>
+                        <td>{o.investAmt.toLocaleString(undefined, { maximumFractionDigits: 4 })} {o.investCcy}</td>
+                        <td>{o.settleDate}</td>
+                        <td>{o.state}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="settings-option"
+                            style={{ padding: "2px 8px", fontSize: "0.75rem" }}
+                            onClick={() => handleRedeem(o)}
+                          >
+                            {t("dualRedeem")}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+        </div>
+      )}
+
       {ctxMenu && (
         <div
           ref={menuRef}
@@ -341,9 +562,115 @@ export default function DualInvestment() {
           <button type="button" className="ctx-menu-item" onClick={handleAnalyze}>
             {t("ctxMenuAnalyzePut")} — ${ctxMenu.product.strikePrice.toLocaleString()}
           </button>
+          {exchange === "okx" && ctxMenu.product.canPurchase && (
+            <button type="button" className="ctx-menu-item" onClick={handleSubscribe}>
+              {t("dualSubscribe")} — ${ctxMenu.product.strikePrice.toLocaleString()}
+            </button>
+          )}
           <button type="button" className="ctx-menu-item" onClick={handleSendToChat}>
             {t("sendToChat")}
           </button>
+        </div>
+      )}
+
+      {subModal && (
+        <div className="modal-overlay" onClick={() => setSubModal(null)}>
+          <div className="modal-dialog" style={{ width: 420 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>
+                {t("dualSubscribeTitle")}: {subModal.coin}{" "}
+                {subModal.direction === "buy_low" ? t("dualBuyLow") : t("dualSellHigh")}
+              </h3>
+              <button type="button" className="modal-close" onClick={() => setSubModal(null)}>
+                &times;
+              </button>
+            </div>
+            <div className="modal-body">
+              <div style={{ display: "flex", gap: 24, fontSize: "0.85rem" }}>
+                <div>
+                  <span style={{ opacity: 0.6 }}>{t("colStrike")}:</span>{" "}
+                  <strong>${subModal.strikePrice.toLocaleString()}</strong>
+                </div>
+                <div>
+                  <span style={{ opacity: 0.6 }}>APR:</span>{" "}
+                  <strong style={{ color: "var(--green)" }}>{subModal.aprPercent.toFixed(2)}%</strong>
+                </div>
+                <div>
+                  <span style={{ opacity: 0.6 }}>{t("dualDuration")}:</span>{" "}
+                  <strong>{subModal.duration}{t("days")}</strong>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: "0.82rem", opacity: 0.6, display: "block", marginBottom: 6 }}>
+                  {t("dualInvestAmount")}
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={subPct}
+                  onChange={(e) => setSubPct(Number(e.target.value))}
+                  style={{ width: "100%", accentColor: "var(--accent)" }}
+                />
+                <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                  {[25, 50, 75, 100].map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      className={`settings-option${subPct === p ? " active" : ""}`}
+                      style={{ padding: "2px 10px", fontSize: "0.75rem", flex: 1 }}
+                      onClick={() => setSubPct(p)}
+                    >
+                      {p}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85rem" }}>
+                <div>
+                  <span style={{ opacity: 0.6 }}>{t("dualInvestAmount")}:</span>{" "}
+                  <strong>{subAmount.toLocaleString(undefined, { maximumFractionDigits: 8 })} {subModal.investCoin}</strong>
+                </div>
+                <div>
+                  <span style={{ opacity: 0.6 }}>{t("dualAvailBalance")}:</span>{" "}
+                  {subBal.toLocaleString(undefined, { maximumFractionDigits: 8 })} {subModal.investCoin}
+                </div>
+              </div>
+
+              <div style={{ background: "var(--surface-hover)", borderRadius: 8, padding: "10px 14px", fontSize: "0.85rem" }}>
+                <span style={{ opacity: 0.6 }}>{t("dualExpectedYield")}:</span>{" "}
+                <strong style={{ color: "var(--green)" }}>
+                  +{subYield.toLocaleString(undefined, { maximumFractionDigits: 8 })} {subModal.investCoin}
+                </strong>
+                <span style={{ opacity: 0.5, marginLeft: 8 }}>
+                  ({subModal.aprPercent.toFixed(2)}% APR / {subModal.duration}{t("days")})
+                </span>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
+                <button
+                  type="button"
+                  className="settings-option"
+                  style={{ padding: "6px 20px" }}
+                  onClick={() => setSubModal(null)}
+                >
+                  {t("cancel")}
+                </button>
+                <button
+                  type="button"
+                  className="add-form-submit"
+                  style={{ padding: "6px 20px" }}
+                  disabled={subAmount <= 0 || subBal <= 0}
+                  onClick={confirmSubscribe}
+                >
+                  {t("confirm")}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

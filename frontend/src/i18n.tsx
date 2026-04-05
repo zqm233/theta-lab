@@ -156,6 +156,18 @@ const translations = {
     zh: "前往 设置 → 交易所 API 配置",
     en: "Go to Settings → Exchange API Configuration",
   },
+  dualBalance: { zh: "可用余额", en: "Available" },
+  dualMyOrders: { zh: "我的持仓", en: "My Orders" },
+  dualNoOrders: { zh: "暂无持仓", en: "No active orders" },
+  dualSubscribe: { zh: "申购", en: "Subscribe" },
+  dualRedeem: { zh: "赎回", en: "Redeem" },
+  dualOrderAmt: { zh: "投入金额", en: "Amount" },
+  dualOrderState: { zh: "状态", en: "Status" },
+  dualOrderCreated: { zh: "创建时间", en: "Created" },
+  dualSubscribeTitle: { zh: "申购双币赢", en: "Subscribe DCD" },
+  dualInvestAmount: { zh: "投入金额", en: "Invest Amount" },
+  dualExpectedYield: { zh: "预计收益", en: "Expected Yield" },
+  dualAvailBalance: { zh: "可用", en: "Available" },
 
   // Settings — LLM
   llmConfig: { zh: "大模型配置", en: "LLM Configuration" },
@@ -173,6 +185,12 @@ const translations = {
   llmConfigured: { zh: "已配置", en: "Configured" },
   llmNotConfigured: { zh: "未配置", en: "Not configured" },
   llmConfigSaved: { zh: "大模型配置已保存，Agent 已重新加载", en: "LLM config saved, agent reloaded" },
+  llmTestBtn: { zh: "测试连接", en: "Test" },
+  llmTesting: { zh: "测试中…", en: "Testing…" },
+  llmTestOk: { zh: "连接成功", en: "Connected" },
+  llmTestFail: { zh: "连接失败", en: "Failed" },
+  llmEdit: { zh: "修改", en: "Edit" },
+  llmAvailable: { zh: "可用", en: "Available" },
 
   // Settings
   settingsRefreshInterval: { zh: "数据刷新间隔", en: "Data Refresh Interval" },
@@ -197,6 +215,19 @@ const translations = {
   okxConfigured: { zh: "已配置", en: "Configured" },
   okxNotConfigured: { zh: "未配置", en: "Not configured" },
   okxConfigSaved: { zh: "OKX API 配置已保存", en: "OKX API configured" },
+  okxMcpConfig: { zh: "OKX MCP 权限", en: "OKX MCP Access" },
+  okxMcpConfigDesc: {
+    zh: "控制 OKX MCP 工具的访问级别。仅查询模式只能查看行情和账户信息，完整权限可执行交易操作。",
+    en: "Control the access level of OKX MCP tools. Query Only mode allows viewing market data and account info; Full Access enables trading operations.",
+  },
+  okxMcpAccessReadonly: { zh: "仅查询", en: "Query Only" },
+  okxMcpAccessFull: { zh: "完整权限", en: "Full Access" },
+  okxMcpFullWarning: {
+    zh: "⚠ 完整权限将允许 AI 执行真实交易操作，请谨慎使用。",
+    en: "⚠ Full Access allows the AI to execute real trades. Use with caution.",
+  },
+  okxMcpSaved: { zh: "OKX MCP 配置已保存，工具已重新加载", en: "OKX MCP config saved, tools reloaded" },
+  okxMcpToolCount: { zh: "已加载工具", en: "Tools loaded" },
   reconfigure: { zh: "重新配置", en: "Reconfigure" },
   marketOpen: { zh: "交易中", en: "Market Open" },
   marketPre: { zh: "盘前", en: "Pre-Market" },
@@ -273,6 +304,12 @@ const translations = {
     en: "Type a message... (Enter to send, Shift+Enter for new line)",
   },
   send: { zh: "发送", en: "Send" },
+
+  // HITL confirmation
+  confirmTitle: { zh: "⚠️ 即将执行以下操作，请确认：", en: "⚠️ The following action will be executed. Please confirm:" },
+  confirmYes: { zh: "确认执行", en: "Confirm" },
+  confirmNo: { zh: "取消", en: "Cancel" },
+  confirmCancelled: { zh: "操作已取消。", en: "Operation cancelled." },
 } as const;
 
 type Key = keyof typeof translations;

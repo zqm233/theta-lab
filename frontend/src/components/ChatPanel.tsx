@@ -9,6 +9,11 @@ interface Message {
   content: string;
 }
 
+interface PendingConfirm {
+  thread_id: string;
+  tool_calls: Array<{ name: string; args: Record<string, unknown> }>;
+}
+
 interface Profile {
   preferred_strategies: string[];
   risk_tolerance: string;
@@ -31,6 +36,7 @@ export default function ChatPanel() {
   const [showProfile, setShowProfile] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [confirmData, setConfirmData] = useState<PendingConfirm | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const { register } = useChatBridge();
@@ -99,6 +105,60 @@ export default function ChatPanel() {
       .catch(() => {});
   }, []);
 
+  const consumeSSE = useCallback(async (response: Response) => {
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    if (!reader) throw new Error("No response body");
+
+    let currentEvent = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          currentEvent = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          const raw = line.slice(6);
+          try {
+            const parsed = JSON.parse(raw);
+
+            if (currentEvent === "thread_id" && parsed.thread_id) {
+              setThreadId(parsed.thread_id);
+              localStorage.setItem("chat_thread_id", parsed.thread_id);
+            } else if (currentEvent === "token" && parsed.content) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last.role === "assistant") {
+                  updated[updated.length - 1] = {
+                    ...last,
+                    content: last.content + parsed.content,
+                  };
+                }
+                return updated;
+              });
+            } else if (currentEvent === "confirm") {
+              setConfirmData({
+                thread_id: parsed.thread_id,
+                tool_calls: parsed.tool_calls,
+              });
+            }
+          } catch {
+            // skip malformed SSE data
+          }
+          currentEvent = "";
+        }
+      }
+    }
+  }, []);
+
   const sendMessage = useCallback(async (directText?: string) => {
     const text = (directText ?? input).trim();
     if (!text || loading) return;
@@ -126,49 +186,7 @@ export default function ChatPanel() {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      if (!reader) throw new Error("No response body");
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const raw = line.slice(6);
-            try {
-              const parsed = JSON.parse(raw);
-
-              if (parsed.thread_id) {
-                setThreadId(parsed.thread_id);
-                localStorage.setItem("chat_thread_id", parsed.thread_id);
-              } else if (parsed.content) {
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  const last = updated[updated.length - 1];
-                  if (last.role === "assistant") {
-                    updated[updated.length - 1] = {
-                      ...last,
-                      content: last.content + parsed.content,
-                    };
-                  }
-                  return updated;
-                });
-              }
-            } catch {
-              // skip malformed SSE data
-            }
-          }
-        }
-      }
-
+      await consumeSSE(response);
       refreshProfile();
     } catch (err) {
       setMessages((prev) => {
@@ -185,8 +203,47 @@ export default function ChatPanel() {
     } finally {
       setLoading(false);
     }
-  }, [input, loading, threadId, refreshProfile]);
+  }, [input, loading, threadId, refreshProfile, consumeSSE]);
   sendRef.current = sendMessage;
+
+  const handleConfirm = useCallback(async (approved: boolean) => {
+    if (!confirmData) return;
+    const savedConfirm = confirmData;
+    setConfirmData(null);
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/chat/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          thread_id: savedConfirm.thread_id,
+          approved,
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      if (approved) {
+        setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+      }
+      await consumeSSE(response);
+      refreshProfile();
+    } catch (err) {
+      setMessages((prev) => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last.role === "assistant") {
+          updated[updated.length - 1] = {
+            ...last,
+            content: `Error: ${err instanceof Error ? err.message : "Connection failed"}`,
+          };
+        }
+        return updated;
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [confirmData, consumeSSE, refreshProfile]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -328,6 +385,36 @@ export default function ChatPanel() {
             <div ref={messagesEndRef} />
           </div>
 
+          {confirmData && (
+            <div className="chat-confirm-bar">
+              <div className="chat-confirm-title">{t("confirmTitle")}</div>
+              <div className="chat-confirm-details">
+                {confirmData.tool_calls.map((tc, i) => (
+                  <div key={i} className="chat-confirm-tool">
+                    <span className="chat-confirm-tool-name">{tc.name}</span>
+                    <pre className="chat-confirm-tool-args">
+                      {JSON.stringify(tc.args, null, 2)}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+              <div className="chat-confirm-actions">
+                <button
+                  className="chat-confirm-btn chat-confirm-yes"
+                  onClick={() => handleConfirm(true)}
+                >
+                  {t("confirmYes")}
+                </button>
+                <button
+                  className="chat-confirm-btn chat-confirm-no"
+                  onClick={() => handleConfirm(false)}
+                >
+                  {t("confirmNo")}
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="chat-input-bar">
             <textarea
               ref={inputRef}
@@ -337,12 +424,12 @@ export default function ChatPanel() {
               onKeyDown={handleKeyDown}
               placeholder={t("chatPlaceholder")}
               rows={1}
-              disabled={loading}
+              disabled={loading || !!confirmData}
             />
             <button
               className="chat-send-btn"
-              onClick={sendMessage}
-              disabled={loading || !input.trim()}
+              onClick={() => sendMessage()}
+              disabled={loading || !input.trim() || !!confirmData}
             >
               {loading ? "..." : t("send")}
             </button>
