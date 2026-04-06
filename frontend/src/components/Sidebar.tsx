@@ -42,15 +42,17 @@ export default function Sidebar({ active, onNavigate }: Props) {
       </div>
 
       <div className="sidebar-bottom">
-        <button className="sidebar-setting-btn" onClick={toggleTheme} title={theme === "dark" ? t("lightMode") : t("darkMode")}>
-          <span>{theme === "dark" ? "☀" : "🌙"}</span>
+        <button className="sidebar-nav-item" onClick={toggleTheme} title={theme === "dark" ? t("lightMode") : t("darkMode")}>
+          <span className="sidebar-nav-icon">{theme === "dark" ? "☀" : "🌙"}</span>
+          <span className="sidebar-nav-label">{theme === "dark" ? t("lightMode") : t("darkMode")}</span>
         </button>
         <button
-          className="sidebar-setting-btn"
+          className="sidebar-nav-item"
           onClick={() => setLang(lang === "zh" ? "en" : "zh")}
           title={lang === "zh" ? "English" : "中文"}
         >
-          <span>🌐</span>
+          <span className="sidebar-nav-icon">🌐</span>
+          <span className="sidebar-nav-label">{lang === "zh" ? "English" : "中文"}</span>
         </button>
       </div>
     </aside>

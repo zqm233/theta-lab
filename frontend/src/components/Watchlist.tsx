@@ -6,6 +6,7 @@ import { usePrices, usePriceSubscribe } from "../priceProvider";
 const DEFAULT_TICKERS = ["TSLL", "TSLA"];
 
 const MARKET_STATE_LABELS: Record<string, { zh: string; en: string }> = {
+  PREPRE: { zh: "盘前", en: "Pre" },
   PRE: { zh: "盘前", en: "Pre" },
   REGULAR: { zh: "交易中", en: "Open" },
   POST: { zh: "盘后", en: "After" },

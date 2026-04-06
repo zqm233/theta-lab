@@ -166,7 +166,7 @@ export default function Portfolio({ filterTicker }: Props) {
                 <th>{t("portfolioEntry")}</th>
                 <th>{t("portfolioCurrent")}</th>
                 <th>{t("portfolioPnl")}</th>
-                <th>{t("expiration")}</th>
+                <th>{t("colExpiration")}</th>
               </tr>
             </thead>
             <tbody>

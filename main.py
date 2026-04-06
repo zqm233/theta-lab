@@ -7,10 +7,13 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 from backend.agent.agent import ThetaLabAgent
+from backend.agent.persistence import create_checkpointer, create_store
 
 
 async def main():
-    agent = ThetaLabAgent()
+    store = create_store()
+    checkpointer = await create_checkpointer()
+    agent = ThetaLabAgent(store=store, checkpointer=checkpointer)
     thread_id = "cli-demo"
 
     print("ThetaLab - Options Selling Assistant")

@@ -9,6 +9,13 @@ import { useSettings } from "../settings";
 import { formatUsMarketTime } from "../usMarketTime";
 import SellPutPanel from "./SellPutPanel";
 
+interface FaQuota {
+  configured: boolean;
+  limit: number;
+  used: number;
+  remaining: number;
+}
+
 type ContextMenu =
   | {
       kind: "row";
@@ -26,7 +33,7 @@ interface Props {
 
 export default function OptionsChain({ ticker }: Props) {
   const { t, lang } = useI18n();
-  const { sendToChat } = useChatBridge();
+  const { sendToChat, submitToChat } = useChatBridge();
   const { addPosition } = usePortfolio();
   const sharedPrice = usePrice(ticker);
   const { refreshIntervalMs, jitteredInterval } = useSettings();
@@ -57,6 +64,16 @@ export default function OptionsChain({ ticker }: Props) {
   const [chainUpdatedAt, setChainUpdatedAt] = useState<Date | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const [faQuota, setFaQuota] = useState<FaQuota>({ configured: false, limit: 5, used: 0, remaining: 0 });
+
+  const refreshFaQuota = useCallback(() => {
+    fetchApi<FaQuota>("/flashalpha/quota")
+      .then(setFaQuota)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => { refreshFaQuota(); }, [refreshFaQuota]);
 
   interface CacheEntry {
     chain: OptionsChainData;
@@ -230,6 +247,23 @@ export default function OptionsChain({ ticker }: Props) {
     const type = ctxMenu.tab === "puts" ? "Put" : "Call";
     sendToChat(formatContractLineForChat(o, type));
     setCtxMenu(null);
+  };
+
+  const handleAdvancedAnalysis = () => {
+    if (!ctxMenu || ctxMenu.kind !== "row") return;
+    const strike = ctxMenu.strike.toFixed(2);
+    const isolationPrefix = lang === "zh"
+      ? `[独立分析请求：这是一个美股期权分析任务，请忽略之前对话中关于加密货币或双币投资的上下文，专注于以下期权分析。]\n\n`
+      : `[Independent analysis request: This is a US stock options analysis task. Ignore any prior crypto or DCD context and focus on the following options analysis.]\n\n`;
+    const body = lang === "zh"
+      ? `请使用 FlashAlpha 对 ${ticker} 进行高级期权分析：查看 GEX、DEX、关键价位和波动率。当前关注行权价 $${strike}，到期日 ${selectedExpiration}。`
+      : `Use FlashAlpha to analyze ${ticker}: GEX, DEX, key levels, and volatility. Strike: $${strike}, Expiration: ${selectedExpiration}.`;
+    const displayText = lang === "zh"
+      ? `🔍 分析 ${ticker} $${strike} ${ctxMenu.tab === "puts" ? "Put" : "Call"} ${selectedExpiration}`
+      : `🔍 Analyzing ${ticker} $${strike} ${ctxMenu.tab === "puts" ? "Put" : "Call"} ${selectedExpiration}`;
+    submitToChat(isolationPrefix + body, displayText);
+    setCtxMenu(null);
+    setTimeout(refreshFaQuota, 8000);
   };
 
   const handleSendAllTabToChat = () => {
@@ -459,6 +493,22 @@ export default function OptionsChain({ ticker }: Props) {
               <button type="button" className="ctx-menu-item" onClick={openAddForm}>
                 📥 {t("addToPortfolio")}
               </button>
+              {faQuota.configured && (
+                <button
+                  type="button"
+                  className="ctx-menu-item"
+                  onClick={handleAdvancedAnalysis}
+                  disabled={faQuota.remaining <= 0}
+                  style={faQuota.remaining <= 0 ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
+                >
+                  🔍 {t("ctxAdvancedAnalysis")}
+                  <span style={{ fontSize: "0.75rem", opacity: 0.6, marginLeft: 6 }}>
+                    {faQuota.remaining > 0
+                      ? `${faQuota.remaining}/${faQuota.limit}`
+                      : `${t("ctxQuotaExhausted")} · ${t("quotaResetTime")}`}
+                  </span>
+                </button>
+              )}
               <button type="button" className="ctx-menu-item" onClick={handleSendRowToChat}>
                 💬 {t("sendToChat")}
               </button>

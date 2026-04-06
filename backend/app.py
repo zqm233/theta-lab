@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
+import certifi
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -15,17 +17,24 @@ from backend.db import close_db, init_db
 
 load_dotenv(override=True)
 
+# Fix macOS SSL cert issue for aiohttp (used by ChatNVIDIA)
+os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+
 logging.basicConfig(level=logging.INFO)
 
 _agent = None
 
 
-def get_agent():
+async def get_agent():
     """Lazy-initialise and return the singleton ThetaLabAgent."""
     global _agent
     if _agent is None:
         from backend.agent.agent import ThetaLabAgent
-        _agent = ThetaLabAgent()
+        from backend.agent.persistence import create_checkpointer, create_store
+
+        store = create_store()
+        checkpointer = await create_checkpointer()
+        _agent = ThetaLabAgent(store=store, checkpointer=checkpointer)
     return _agent
 
 
@@ -45,8 +54,17 @@ async def lifespan(application: FastAPI):
     await init_mcp_tools()
 
     try:
-        get_agent()
+        agent = await get_agent()
         logging.getLogger(__name__).info("ThetaLab agent initialised")
+
+        from backend.a2a import create_a2a_app
+
+        a2a_sub = create_a2a_app(agent)
+        application.mount("/a2a", a2a_sub)
+        logging.getLogger(__name__).info(
+            "A2A endpoint mounted at /a2a  "
+            "(AgentCard: /a2a/.well-known/agent-card.json)"
+        )
     except ValueError as e:
         logging.getLogger(__name__).warning("Agent not initialised: %s", e)
     yield

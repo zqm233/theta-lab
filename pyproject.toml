@@ -18,6 +18,9 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=3.0.3",
     "aiosqlite>=0.22.1",
     "sse-starlette>=3.3.3",
+    "langchain-nvidia-ai-endpoints>=1.2.1",
+    "a2a-sdk",
+    "langchain-mcp-adapters>=0.2.2",
 ]
 
 [project.scripts]

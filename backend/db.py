@@ -80,6 +80,12 @@ def init_db() -> None:
             PRIMARY KEY (date, account_id)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS fa_usage (
+            date TEXT PRIMARY KEY,
+            used INTEGER NOT NULL DEFAULT 0
+        )
+    """)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.commit()
 

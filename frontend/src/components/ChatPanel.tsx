@@ -1,12 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { API_BASE } from "../hooks/useApi";
-import { useI18n } from "../i18n";
+import { useI18n, type Lang } from "../i18n";
 import { useChatBridge } from "../chatBridge";
+
+const TOOL_LABELS: Record<string, Record<Lang, string>> = {
+  GetGex: { zh: "GEX Gamma 暴露", en: "GEX Gamma Exposure" },
+  GetDex: { zh: "DEX Delta 暴露", en: "DEX Delta Exposure" },
+  GetVex: { zh: "VEX Vanna 暴露", en: "VEX Vanna Exposure" },
+  GetKeyLevels: { zh: "关键价位", en: "Key Levels" },
+  GetStockSummary: { zh: "综合分析摘要", en: "Stock Summary" },
+  GetVolatilityAnalysis: { zh: "波动率分析", en: "Volatility Analysis" },
+  GetOptionsChain: { zh: "期权链查询", en: "Options Chain" },
+  CalculateGreeks: { zh: "希腊字母计算", en: "Calculate Greeks" },
+  SolveIV: { zh: "隐含波动率反求", en: "Solve IV" },
+  GetAccount: { zh: "账户信息", en: "Account Info" },
+};
+
+interface ToolCallInfo {
+  name: string;
+  status: "calling" | "done";
+}
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+  displayContent?: string;
+  toolCalls?: ToolCallInfo[];
 }
 
 interface PendingConfirm {
@@ -25,7 +45,7 @@ interface Profile {
 }
 
 export default function ChatPanel() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -48,13 +68,13 @@ export default function ChatPanel() {
     el.style.height = Math.min(el.scrollHeight, 150) + "px";
   }, []);
 
-  const sendRef = useRef<((directText?: string) => Promise<void>) | null>(null);
+  const sendRef = useRef<((directText?: string, displayText?: string) => Promise<void>) | null>(null);
 
   useEffect(() => {
-    register((text: string, autoSubmit?: boolean) => {
+    register((text: string, autoSubmit?: boolean, displayText?: string) => {
       setMinimized(false);
       if (autoSubmit) {
-        sendRef.current?.(text);
+        sendRef.current?.(text, displayText);
         return;
       }
       setInput((prev) => {
@@ -144,6 +164,35 @@ export default function ChatPanel() {
                 }
                 return updated;
               });
+            } else if (currentEvent === "tool_start" && parsed.name) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last.role === "assistant") {
+                  const existing = last.toolCalls ?? [];
+                  if (!existing.some((tc) => tc.name === parsed.name)) {
+                    updated[updated.length - 1] = {
+                      ...last,
+                      toolCalls: [...existing, { name: parsed.name, status: "calling" }],
+                    };
+                  }
+                }
+                return updated;
+              });
+            } else if (currentEvent === "tool_end" && parsed.name) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last.role === "assistant" && last.toolCalls) {
+                  updated[updated.length - 1] = {
+                    ...last,
+                    toolCalls: last.toolCalls.map((tc) =>
+                      tc.name === parsed.name ? { ...tc, status: "done" as const } : tc
+                    ),
+                  };
+                }
+                return updated;
+              });
             } else if (currentEvent === "confirm") {
               setConfirmData({
                 thread_id: parsed.thread_id,
@@ -159,11 +208,11 @@ export default function ChatPanel() {
     }
   }, []);
 
-  const sendMessage = useCallback(async (directText?: string) => {
+  const sendMessage = useCallback(async (directText?: string, displayText?: string) => {
     const text = (directText ?? input).trim();
     if (!text || loading) return;
 
-    const userMsg: Message = { role: "user", content: text };
+    const userMsg: Message = { role: "user", content: text, displayContent: displayText };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     if (inputRef.current) inputRef.current.style.height = "auto";
@@ -370,14 +419,31 @@ export default function ChatPanel() {
                   {msg.role === "user" ? "You" : "AI"}
                 </div>
                 <div className="chat-msg-content">
+                  {msg.role === "assistant" && msg.toolCalls && msg.toolCalls.length > 0 && (
+                    <div className="chat-tool-calls">
+                      {msg.toolCalls.map((tc) => (
+                        <div key={tc.name} className={`chat-tool-call chat-tool-${tc.status}`}>
+                          <span className="chat-tool-icon">
+                            {tc.status === "done" ? "\u2713" : "\u25CB"}
+                          </span>
+                          <span className="chat-tool-name">{TOOL_LABELS[tc.name]?.[lang] ?? tc.name}</span>
+                          <span className="chat-tool-status">
+                            {tc.status === "calling" ? t("toolCalling") : ""}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {msg.content ? (
                     msg.role === "assistant" ? (
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     ) : (
-                      msg.content
+                      msg.displayContent || msg.content
                     )
                   ) : (
-                    loading && i === messages.length - 1 ? "..." : ""
+                    loading && i === messages.length - 1 ? (
+                      msg.toolCalls && msg.toolCalls.length > 0 ? "" : "..."
+                    ) : ""
                   )}
                 </div>
               </div>

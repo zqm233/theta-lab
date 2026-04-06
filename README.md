@@ -17,6 +17,8 @@ Unlike general-purpose trading platforms, ThetaLab is designed around the option
 
 The built-in **hierarchical multi-agent system** (LangGraph + LangChain, any LLM provider) acts as your research and trading copilot. A Router agent classifies user intent and dispatches to specialized sub-agents — Options, Crypto (with Market/Account/DCD sub-routing), or General — each with its own tools and prompt. Sensitive operations (account transfers, DCD purchases) trigger a human-in-the-loop confirmation flow.
 
+ThetaLab also implements the **[A2A (Agent-to-Agent) protocol](https://github.com/google/A2A)**, exposing itself as an interoperable agent that other AI agents can discover and collaborate with over HTTP.
+
 ## Key Features
 
 - **Options Chain Viewer** — Real-time puts/calls with Greeks, IV, bid/ask spreads
@@ -28,11 +30,17 @@ The built-in **hierarchical multi-agent system** (LangGraph + LangChain, any LLM
 - **OKX Integration** — Full account management, market data, and trading via OKX MCP (configurable readonly/full access)
 - **AI Chat Assistant** — Hierarchical multi-agent with intent routing, streaming responses, and memory
 - **Human-in-the-Loop** — Sensitive operations (transfers, purchases) pause for user confirmation before execution
+- **A2A Protocol** — Agent Card discovery, JSON-RPC messaging, and streaming — any A2A-compatible agent can call ThetaLab
 - **Bilingual UI** — Chinese / English
 
 ## Architecture
 
 ```
+                              ┌───── A2A Protocol ─────┐
+                              │  /.well-known/agent.json │
+External Agents ──JSON-RPC──► │  /a2a (message/send)    │
+                              └────────────┬────────────┘
+                                           │
 User ──► React Frontend ──► FastAPI Backend ──► LangGraph Agent (Hierarchical)
                 │                                       │
                 │                              ┌────────┼────────┐
@@ -42,14 +50,24 @@ User ──► React Frontend ──► FastAPI Backend ──► LangGraph Agen
                 │                             ┌────────┼────────┐
                 │                             ▼        ▼        ▼
                 │                          Market  Account    DCD
-                │                             │        │        │
-                ▼                             ▼        ▼        ▼
-          SSE Stream ◄──────────────── OKX MCP Tools (stdio)
+                │                             │                │
+                ▼                             ▼                ▼
+          SSE Stream ◄──────────────── MCP Tools (OKX/CMC/FA)
           (tokens + confirm)                  │
                                               ▼
                                       Human-in-the-Loop
                                     (pause → confirm → resume)
 ```
+
+### Agent Communication Patterns
+
+ThetaLab uses three levels of agent communication:
+
+| Level | Pattern | Example | Boundary |
+|-------|---------|---------|----------|
+| **L1** | StateGraph routing | Router → Options / Crypto / General | In-process, shared state |
+| **L2** | Agent-as-Tool | DCD Agent → Market Agent (`analyze_market`) | In-process, tool call |
+| **L3** | A2A protocol | External Agent → ThetaLab (`/a2a`) | Cross-process, HTTP |
 
 ## Tech Stack
 
@@ -59,9 +77,11 @@ User ──► React Frontend ──► FastAPI Backend ──► LangGraph Agen
 | Frontend | React 19, Vite, TypeScript |
 | AI Agent | LangChain + LangGraph (hierarchical multi-agent) |
 | LLM | Any provider — Gemini, OpenAI, Anthropic, or OpenRouter-compatible |
+| Agent Interop | A2A protocol (a2a-sdk) |
+| Observability | LangSmith (tracing, evaluation) |
 | Market Data | yfinance + Yahoo Finance API |
 | Quantitative | NumPy, SciPy (BSM model, Greeks, HV) |
-| Database | SQLite (AsyncSqliteSaver for checkpoints) |
+| Database | SQLite (pluggable — PostgreSQL-ready via persistence abstraction) |
 | Streaming | SSE (Server-Sent Events) |
 | Exchange Data | OKX MCP (market/account/DCD), Binance API |
 
@@ -69,36 +89,59 @@ User ──► React Frontend ──► FastAPI Backend ──► LangGraph Agen
 
 ```
 thetalab/
-├── main.py                    # CLI entry point
-├── pyproject.toml             # Python project config
+├── main.py                        # CLI entry point
+├── pyproject.toml                 # Python project config
+├── Makefile                       # Dev shortcuts (make dev / backend / frontend)
 ├── backend/
-│   ├── app.py                 # FastAPI application
-│   ├── db.py                  # SQLite database setup
+│   ├── app.py                     # FastAPI application (lifespan, DI)
+│   ├── db.py                      # SQLite database setup
+│   ├── a2a/                       # A2A protocol integration
+│   │   ├── __init__.py            # create_a2a_app() — FastAPI sub-app factory
+│   │   ├── agent_card.py          # AgentCard definition (skills, capabilities)
+│   │   └── executor.py            # A2A ↔ ThetaLabAgent bridge (stream translation)
 │   ├── api/
-│   │   └── routes.py          # REST & SSE endpoints
+│   │   ├── chat.py                # Chat & profile endpoints (SSE)
+│   │   ├── options.py             # Options chain endpoints
+│   │   ├── portfolio.py           # Portfolio & trade history
+│   │   ├── crypto.py              # Crypto / DCD endpoints
+│   │   ├── settings.py            # LLM, MCP, LangSmith config
+│   │   └── schemas.py             # Pydantic request/response models
 │   ├── agent/
-│   │   ├── agent.py           # Hierarchical multi-agent (Router → sub-agents)
-│   │   ├── memory.py          # Long-term memory store
-│   │   ├── tools.py           # LangChain @tool definitions
-│   │   └── mcp_tools.py       # OKX MCP tool loader (prefix-based filtering)
+│   │   ├── agent.py               # Public API facade (ThetaLabAgent)
+│   │   ├── graph_builder.py       # Top-level graph orchestrator
+│   │   ├── graphs/
+│   │   │   └── crypto.py          # Crypto domain subgraph (Market/Account/DCD)
+│   │   ├── graph_state.py         # State schemas & routing helpers
+│   │   ├── prompts.py             # All system prompts
+│   │   ├── llm.py                 # LLM factory & ContentNormalizingLLM
+│   │   ├── agent_tool.py          # Agent-as-Tool wrapper
+│   │   ├── streaming.py           # Stream loop & event unpacking
+│   │   ├── memory.py              # Long-term profile store & extraction
+│   │   ├── utils.py               # Shared utilities (extract_text, is_safe_tool)
+│   │   ├── tools.py               # LangChain @tool definitions
+│   │   ├── mcp_tools.py           # MCP tool loader (OKX, CMC, FlashAlpha)
+│   │   └── persistence/
+│   │       ├── __init__.py        # Backend dispatch (sqlite / postgres)
+│   │       ├── sqlite.py          # SQLite checkpointer & store
+│   │       └── postgres.py        # PostgreSQL checkpointer & store
 │   ├── analysis/
-│   │   ├── greeks.py          # Black-Scholes & Greeks
-│   │   ├── strategy.py        # Sell Put metrics (cushion, ROIC)
-│   │   ├── volatility.py      # HV, IV Rank, IV Percentile
-│   │   └── risk.py            # Earnings & risk assessment
+│   │   ├── greeks.py              # Black-Scholes & Greeks
+│   │   ├── strategy.py            # Sell Put metrics (cushion, ROIC)
+│   │   ├── volatility.py         # HV, IV Rank, IV Percentile
+│   │   └── risk.py                # Earnings & risk assessment
 │   └── data/
-│       ├── market.py          # Yahoo Finance data fetching
-│       ├── securities.py      # Security search
-│       ├── binance.py         # Binance dual investment
-│       └── okx.py             # OKX dual investment
+│       ├── market.py              # Yahoo Finance data fetching
+│       ├── securities.py          # Security search
+│       ├── binance.py             # Binance dual investment
+│       └── okx.py                 # OKX dual investment
 ├── frontend/
 │   └── src/
-│       ├── App.tsx            # Main app shell
-│       ├── components/        # UI components
-│       ├── hooks/             # Custom React hooks
-│       ├── i18n.tsx           # Internationalization (zh/en)
+│       ├── App.tsx                # Main app shell (resizable chat panel)
+│       ├── components/            # UI components
+│       ├── hooks/                 # Custom React hooks
+│       ├── i18n.tsx               # Internationalization (zh/en)
 │       └── ...
-└── data/                      # Runtime SQLite databases (gitignored)
+└── data/                          # Runtime SQLite databases (gitignored)
 ```
 
 ## Getting Started
@@ -126,43 +169,61 @@ cp .env.example .env
 # Edit .env and add your API keys
 ```
 
-3. **Install backend dependencies**
+3. **Install dependencies**
 
 ```bash
-uv sync
-# or: pip install -e .
+uv sync              # Backend (Python)
+cd frontend && bun install && cd ..   # Frontend
 ```
 
-4. **Install frontend dependencies**
+4. **Start both servers**
 
 ```bash
-cd frontend
-bun install
-cd ..
+make dev
+# Backend → http://localhost:8000
+# Frontend → http://localhost:5173
+# A2A Agent Card → http://localhost:8000/a2a/.well-known/agent-card.json
 ```
 
-5. **Start the backend**
+Or start them individually:
 
 ```bash
-uv run python -m backend.app
-# API available at http://localhost:8000
-```
-
-6. **Start the frontend** (in a separate terminal)
-
-```bash
-cd frontend
-bun run dev
-# UI available at http://localhost:5173
+make backend   # Backend only
+make frontend  # Frontend only (in a separate terminal)
 ```
 
 ### CLI Mode
 
-You can also interact with the agent directly from the terminal:
-
 ```bash
 uv run python main.py
 ```
+
+## A2A Integration
+
+ThetaLab exposes an A2A-compatible endpoint at `/a2a`. Any A2A client can discover and interact with it:
+
+```bash
+# Discover capabilities
+curl http://localhost:8000/a2a/.well-known/agent-card.json
+
+# Send a message
+curl -X POST http://localhost:8000/a2a \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "messageId": "1",
+        "role": "user",
+        "parts": [{"text": "Analyze TSLA sell put at $200 strike"}]
+      }
+    },
+    "id": "req-1"
+  }'
+```
+
+The agent advertises three skills via its Agent Card: **Options Analysis**, **Crypto Market Analysis**, and **Dual Investment Analysis**.
 
 ## License
 

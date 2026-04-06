@@ -1,10 +1,10 @@
 import { createContext, useCallback, useContext, useRef, type ReactNode } from "react";
 
-type ChatHandler = (text: string, autoSubmit?: boolean) => void;
+type ChatHandler = (text: string, autoSubmit?: boolean, displayText?: string) => void;
 
 interface ChatBridgeValue {
   sendToChat: (text: string) => void;
-  submitToChat: (text: string) => void;
+  submitToChat: (text: string, displayText?: string) => void;
   register: (handler: ChatHandler) => void;
 }
 
@@ -21,8 +21,8 @@ export function ChatBridgeProvider({ children }: { children: ReactNode }) {
     handlerRef.current?.(text, false);
   }, []);
 
-  const submitToChat = useCallback((text: string) => {
-    handlerRef.current?.(text, true);
+  const submitToChat = useCallback((text: string, displayText?: string) => {
+    handlerRef.current?.(text, true, displayText);
   }, []);
 
   return (

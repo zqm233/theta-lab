@@ -144,7 +144,7 @@ export default function TradeHistory({ filters }: Props) {
                 <th>{t("portfolioEntry")}</th>
                 <th>{t("exitPrice")}</th>
                 <th>{t("portfolioPnl")}</th>
-                <th>{t("expiration")}</th>
+                <th>{t("colExpiration")}</th>
                 <th>{t("closedAt")}</th>
                 <th></th>
               </tr>

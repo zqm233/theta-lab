@@ -82,36 +82,6 @@ export default function Settings() {
     }
   }, [llmProvider, llmModel, llmBaseUrl, llmApiKey, llmSaved]);
 
-  const saveLlmConfig = useCallback(async () => {
-    setLlmSaving(true);
-    try {
-      const res = await fetch(`${API_BASE}/llm/config`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: isCustom ? "openai" : llmProvider,
-          model: llmModel.trim(),
-          apiKey: llmApiKey.trim(),
-          baseUrl: llmBaseUrl.trim(),
-        }),
-      });
-      if (res.ok) {
-        setLlmConfigured(true);
-        setLlmEditing(false);
-        setLlmApiKey("");
-        setLlmVerified(false);
-        setLlmSaved({ provider: llmProvider, model: llmModel.trim(), baseUrl: llmBaseUrl.trim() });
-        providerDrafts.current = {};
-        setLlmToast(t("llmConfigSaved"));
-        setTimeout(() => setLlmToast(null), 3000);
-      }
-    } catch {
-      /* silent */
-    } finally {
-      setLlmSaving(false);
-    }
-  }, [llmProvider, isCustom, llmModel, llmApiKey, llmBaseUrl, t]);
-
   const testLlmConnection = useCallback(async () => {
     setLlmTesting(true);
     setLlmTestResult(null);
@@ -133,6 +103,36 @@ export default function Settings() {
       setTimeout(() => setLlmTestResult(null), 6000);
     }
   }, [t]);
+
+  const saveLlmConfig = useCallback(async () => {
+    setLlmSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/llm/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: isCustom ? "openai" : llmProvider,
+          model: llmModel.trim(),
+          apiKey: llmApiKey.trim(),
+          baseUrl: llmBaseUrl.trim(),
+        }),
+      });
+      if (res.ok) {
+        setLlmConfigured(true);
+        setLlmEditing(false);
+        setLlmApiKey("");
+        setLlmSaved({ provider: llmProvider, model: llmModel.trim(), baseUrl: llmBaseUrl.trim() });
+        providerDrafts.current = {};
+        setLlmToast(t("llmConfigSaved"));
+        setTimeout(() => setLlmToast(null), 3000);
+        testLlmConnection();
+      }
+    } catch {
+      /* silent */
+    } finally {
+      setLlmSaving(false);
+    }
+  }, [llmProvider, isCustom, llmModel, llmApiKey, llmBaseUrl, t, testLlmConnection]);
 
   // Binance
   const [binanceKey, setBinanceKey] = useState("");
@@ -157,6 +157,29 @@ export default function Settings() {
   const [mcpSaving, setMcpSaving] = useState(false);
   const [mcpToast, setMcpToast] = useState<string | null>(null);
 
+  // FlashAlpha MCP
+  const [faKey, setFaKey] = useState("");
+  const [faConfigured, setFaConfigured] = useState<boolean | null>(null);
+  const [faEditing, setFaEditing] = useState(false);
+  const [faSaving, setFaSaving] = useState(false);
+  const [faToast, setFaToast] = useState<string | null>(null);
+  const [faToolCount, setFaToolCount] = useState<number | null>(null);
+
+  // CMC MCP
+  const [cmcKey, setCmcKey] = useState("");
+  const [cmcConfigured, setCmcConfigured] = useState<boolean | null>(null);
+  const [cmcEditing, setCmcEditing] = useState(false);
+  const [cmcSaving, setCmcSaving] = useState(false);
+  const [cmcToast, setCmcToast] = useState<string | null>(null);
+  const [cmcToolCount, setCmcToolCount] = useState<number | null>(null);
+
+  // LangSmith
+  const [lsKey, setLsKey] = useState("");
+  const [lsConfigured, setLsConfigured] = useState<boolean | null>(null);
+  const [lsEditing, setLsEditing] = useState(false);
+  const [lsSaving, setLsSaving] = useState(false);
+  const [lsToast, setLsToast] = useState<string | null>(null);
+
   useEffect(() => {
     fetch(`${API_BASE}/dual-invest/status`)
       .then((r) => (r.ok ? r.json() : { binance: false, okx: false }))
@@ -177,6 +200,30 @@ export default function Settings() {
         }
       })
       .catch(() => {});
+
+    fetch(`${API_BASE}/cmc-mcp/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setCmcConfigured(!!d.configured);
+      })
+      .catch(() => setCmcConfigured(false));
+
+    fetch(`${API_BASE}/flashalpha/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) {
+          setFaConfigured(!!d.configured);
+          if (d.toolCount) setFaToolCount(d.toolCount);
+        }
+      })
+      .catch(() => setFaConfigured(false));
+
+    fetch(`${API_BASE}/langsmith/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setLsConfigured(!!d.configured);
+      })
+      .catch(() => setLsConfigured(false));
   }, []);
 
   const saveBinanceKeys = useCallback(async () => {
@@ -259,6 +306,82 @@ export default function Settings() {
     }
   }, [t]);
 
+  const saveCmcKey = useCallback(async () => {
+    if (!cmcKey.trim()) return;
+    setCmcSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/cmc-mcp/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: cmcKey.trim() }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setCmcConfigured(true);
+        setCmcEditing(false);
+        setCmcKey("");
+        setCmcToolCount(d.cmcToolCount ?? null);
+        setCmcToast(t("cmcMcpSaved"));
+        setTimeout(() => setCmcToast(null), 3000);
+      }
+    } catch {
+      /* silent */
+    } finally {
+      setCmcSaving(false);
+    }
+  }, [cmcKey, t]);
+
+  const saveFaKey = useCallback(async () => {
+    if (!faKey.trim()) return;
+    setFaSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/flashalpha/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: faKey.trim() }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setFaConfigured(true);
+        setFaEditing(false);
+        setFaKey("");
+        setFaToolCount(d.toolCount ?? null);
+        setFaToast(t("faMcpSaved"));
+        setTimeout(() => setFaToast(null), 3000);
+      }
+    } catch {
+      /* silent */
+    } finally {
+      setFaSaving(false);
+    }
+  }, [faKey, t]);
+
+  const saveLsKey = useCallback(async () => {
+    if (!lsKey.trim()) return;
+    setLsSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/langsmith/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: lsKey.trim() }),
+      });
+      if (res.ok) {
+        setLsConfigured(true);
+        setLsEditing(false);
+        setLsKey("");
+        setLsToast(t("langsmithSaved"));
+        setTimeout(() => setLsToast(null), 3000);
+      }
+    } catch {
+      /* silent */
+    } finally {
+      setLsSaving(false);
+    }
+  }, [lsKey, t]);
+
+  const lsLocked = !!lsConfigured && !lsEditing;
+  const faLocked = !!faConfigured && !faEditing;
+  const cmcLocked = !!cmcConfigured && !cmcEditing;
   const binanceLocked = !!binanceConfigured && !binanceEditing;
   const okxLocked = !!okxConfigured && !okxEditing;
 
@@ -280,7 +403,7 @@ export default function Settings() {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
             <label style={{ fontSize: "0.78rem", opacity: 0.5, display: "block", marginBottom: 4 }}>{t("llmProvider")}</label>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               {LLM_PROVIDERS.map((p) => (
                 <button
                   key={p}
@@ -291,6 +414,15 @@ export default function Settings() {
                   {LLM_PROVIDER_LABELS[p] || p}
                 </button>
               ))}
+              {llmLocked && (
+                <button
+                  className="settings-option"
+                  style={{ marginLeft: 8, padding: "2px 10px", fontSize: "0.75rem" }}
+                  onClick={handleLlmEdit}
+                >
+                  {t("reconfigure")}
+                </button>
+              )}
             </div>
           </div>
           <div style={{ display: "flex", gap: 12 }}>
@@ -334,14 +466,31 @@ export default function Settings() {
             </div>
           )}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <button
-              className={llmLocked ? "add-form-submit llm-edit-btn" : "add-form-submit"}
-              onClick={llmLocked ? handleLlmEdit : saveLlmConfig}
-              disabled={!llmLocked && (llmSaving || !llmModel.trim() || (!llmConfigured && !llmApiKey.trim()) || (isCustom && !llmBaseUrl.trim()))}
-              style={{ maxWidth: 200, padding: "6px 24px" }}
-            >
-              {llmLocked ? t("llmEdit") : t("save")}
-            </button>
+            {!llmLocked && (
+              <button
+                className="settings-option"
+                onClick={saveLlmConfig}
+                disabled={llmSaving || !llmModel.trim() || (!llmConfigured && !llmApiKey.trim()) || (isCustom && !llmBaseUrl.trim())}
+                style={{ padding: "6px 16px" }}
+              >
+                {t("save")}
+              </button>
+            )}
+            {!llmLocked && llmEditing && (
+              <button
+                className="settings-option"
+                onClick={() => {
+                  setLlmEditing(false);
+                  setLlmApiKey("");
+                  setLlmProvider(llmSaved.provider);
+                  setLlmModel(llmSaved.model);
+                  setLlmBaseUrl(llmSaved.baseUrl);
+                }}
+                style={{ padding: "6px 16px" }}
+              >
+                {t("cancel")}
+              </button>
+            )}
             {llmConfigured && (
               <button
                 className="settings-option"
@@ -363,6 +512,59 @@ export default function Settings() {
               wordBreak: "break-word",
             }}>
               {llmTestResult.msg}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* LangSmith Observability */}
+      <div className="settings-section">
+        <label className="settings-label">{t("langsmithConfig")}</label>
+        <p className="settings-desc">{t("langsmithConfigDesc")}</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <span className={`market-status-dot ${lsConfigured ? "active" : "closed"}`} />
+          <span style={{ fontSize: "0.85rem" }}>
+            {lsConfigured ? t("langsmithConfigured") : t("langsmithNotConfigured")}
+          </span>
+          {lsLocked && (
+            <button
+              className="settings-option"
+              style={{ marginLeft: 8, padding: "2px 10px", fontSize: "0.75rem" }}
+              onClick={() => setLsEditing(true)}
+            >
+              {t("reconfigure")}
+            </button>
+          )}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <input
+            className="add-form-input"
+            type="password"
+            placeholder="LangSmith API Key (lsv2_pt_...)"
+            value={lsLocked ? MASKED : lsKey}
+            onChange={(e) => setLsKey(e.target.value)}
+            disabled={lsLocked}
+            autoComplete="off"
+          />
+          {!lsLocked && (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                className="add-form-submit"
+                onClick={saveLsKey}
+                disabled={lsSaving || !lsKey.trim()}
+                style={{ maxWidth: 200, padding: "6px 24px" }}
+              >
+                {t("save")}
+              </button>
+              {lsEditing && (
+                <button
+                  className="settings-option"
+                  onClick={() => { setLsEditing(false); setLsKey(""); }}
+                  style={{ padding: "6px 16px" }}
+                >
+                  {t("cancel")}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -559,10 +761,129 @@ export default function Settings() {
         )}
       </div>
 
+      {/* FlashAlpha MCP */}
+      <div className="settings-section">
+        <label className="settings-label">{t("faMcpConfig")}</label>
+        <p className="settings-desc">{t("faMcpConfigDesc")}</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <span className={`market-status-dot ${faConfigured ? "active" : "closed"}`} />
+          <span style={{ fontSize: "0.85rem" }}>
+            {faConfigured ? t("faMcpConfigured") : t("faMcpNotConfigured")}
+          </span>
+          {faToolCount != null && (
+            <span style={{ fontSize: "0.8rem", opacity: 0.6 }}>
+              ({t("faMcpToolCount")}: {faToolCount})
+            </span>
+          )}
+          {faLocked && (
+            <button
+              className="settings-option"
+              style={{ marginLeft: 8, padding: "2px 10px", fontSize: "0.75rem" }}
+              onClick={() => setFaEditing(true)}
+            >
+              {t("reconfigure")}
+            </button>
+          )}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <input
+            className="add-form-input"
+            type="password"
+            placeholder="FlashAlpha API Key"
+            value={faLocked ? MASKED : faKey}
+            onChange={(e) => setFaKey(e.target.value)}
+            disabled={faLocked}
+            autoComplete="off"
+          />
+          {!faLocked && (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                className="add-form-submit"
+                onClick={saveFaKey}
+                disabled={faSaving || !faKey.trim()}
+                style={{ maxWidth: 200, padding: "6px 24px" }}
+              >
+                {faSaving ? t("mcpConnecting") : t("save")}
+              </button>
+              {faEditing && (
+                <button
+                  className="settings-option"
+                  onClick={() => { setFaEditing(false); setFaKey(""); }}
+                  style={{ padding: "6px 16px" }}
+                >
+                  {t("cancel")}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* CoinMarketCap MCP */}
+      <div className="settings-section">
+        <label className="settings-label">{t("cmcMcpConfig")}</label>
+        <p className="settings-desc">{t("cmcMcpConfigDesc")}</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <span className={`market-status-dot ${cmcConfigured ? "active" : "closed"}`} />
+          <span style={{ fontSize: "0.85rem" }}>
+            {cmcConfigured ? t("cmcMcpConfigured") : t("cmcMcpNotConfigured")}
+          </span>
+          {cmcToolCount != null && (
+            <span style={{ fontSize: "0.8rem", opacity: 0.6 }}>
+              ({t("cmcMcpToolCount")}: {cmcToolCount})
+            </span>
+          )}
+          {cmcLocked && (
+            <button
+              className="settings-option"
+              style={{ marginLeft: 8, padding: "2px 10px", fontSize: "0.75rem" }}
+              onClick={() => setCmcEditing(true)}
+            >
+              {t("reconfigure")}
+            </button>
+          )}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <input
+            className="add-form-input"
+            type="password"
+            placeholder="CoinMarketCap API Key"
+            value={cmcLocked ? MASKED : cmcKey}
+            onChange={(e) => setCmcKey(e.target.value)}
+            disabled={cmcLocked}
+            autoComplete="off"
+          />
+          {!cmcLocked && (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                className="add-form-submit"
+                onClick={saveCmcKey}
+                disabled={cmcSaving || !cmcKey.trim()}
+                style={{ maxWidth: 200, padding: "6px 24px" }}
+              >
+                {cmcSaving ? t("mcpConnecting") : t("save")}
+              </button>
+              {cmcEditing && (
+                <button
+                  className="settings-option"
+                  onClick={() => { setCmcEditing(false); setCmcKey(""); }}
+                  style={{ padding: "6px 16px" }}
+                >
+                  {t("cancel")}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       {llmToast && <div className="toast">{llmToast}</div>}
+      {lsToast && <div className="toast">{lsToast}</div>}
       {binanceToast && <div className="toast">{binanceToast}</div>}
       {okxToast && <div className="toast">{okxToast}</div>}
       {mcpToast && <div className="toast">{mcpToast}</div>}
+      {faToast && <div className="toast">{faToast}</div>}
+      {cmcToast && <div className="toast">{cmcToast}</div>}
     </div>
   );
 }

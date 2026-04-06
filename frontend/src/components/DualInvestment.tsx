@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE } from "../hooks/useApi";
 import { useChatBridge } from "../chatBridge";
 import { useI18n } from "../i18n";
+import { useSettings } from "../settings";
 import { formatUsMarketTime } from "../usMarketTime";
 
 interface Product {
@@ -50,12 +51,13 @@ const COINS = ["BTC", "ETH", "SOL", "BNB"];
 export default function DualInvestment() {
   const { t, lang } = useI18n();
   const { sendToChat, submitToChat } = useChatBridge();
+  const { jitteredInterval } = useSettings();
   const [exchangeStatus, setExchangeStatus] = useState<Record<Exchange, boolean>>({
     binance: false,
     okx: false,
   });
   const [statusLoaded, setStatusLoaded] = useState(false);
-  const [exchange, setExchange] = useState<Exchange>("binance");
+  const [exchange, setExchange] = useState<Exchange>("okx");
   const [coin, setCoin] = useState("BTC");
   const [direction, setDirection] = useState<"buy_low" | "sell_high">("buy_low");
   const [products, setProducts] = useState<Product[]>([]);
@@ -75,12 +77,14 @@ export default function DualInvestment() {
   const menuRef = useRef<HTMLDivElement>(null);
   const coinMountRef = useRef(false);
 
+
+
   useEffect(() => {
     fetch(`${API_BASE}/dual-invest/status`)
       .then((r) => (r.ok ? r.json() : { binance: false, okx: false }))
       .then((d) => {
         setExchangeStatus({ binance: !!d.binance, okx: !!d.okx });
-        if (!d.binance && d.okx) setExchange("okx");
+        if (!d.okx && d.binance) setExchange("binance");
         setStatusLoaded(true);
       })
       .catch(() => setStatusLoaded(true));
@@ -148,16 +152,34 @@ export default function DualInvestment() {
 
   useEffect(() => {
     fetchSpot(false);
-    const timer = setInterval(() => {
-      fetchSpot(true);
-    }, 15_000);
-    return () => clearInterval(timer);
-  }, [coin, fetchSpot]);
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      timer = setTimeout(() => {
+        fetchSpot(true);
+        schedule();
+      }, jitteredInterval());
+    };
+    schedule();
+    return () => clearTimeout(timer);
+  }, [coin, fetchSpot, jitteredInterval]);
 
   const formatSpotTime = (d: Date) =>
     `${formatUsMarketTime(d, lang)}${t("marketTimeEt")}`;
 
   const investCoin = direction === "buy_low" ? "USDT" : coin;
+
+  const refreshBalance = useCallback(() => {
+    if (exchange !== "okx" || !isConfigured) return;
+    fetch(`${API_BASE}/okx/balance?ccy=${investCoin}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d?.balances) return;
+        const entry = d.balances.find((b: { ccy: string }) => b.ccy === investCoin);
+        setAvailBal(entry ? entry.availBal : 0);
+        setBalCcy(entry ? entry.ccy : investCoin);
+      })
+      .catch(() => {});
+  }, [exchange, isConfigured, investCoin]);
 
   useEffect(() => {
     if (exchange !== "okx" || !isConfigured) {
@@ -185,9 +207,13 @@ export default function DualInvestment() {
         .catch(() => {});
     };
     load();
-    const timer = setInterval(load, 30_000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [exchange, isConfigured, investCoin]);
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      timer = setTimeout(() => { load(); schedule(); }, jitteredInterval());
+    };
+    schedule();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [exchange, isConfigured, investCoin, jitteredInterval]);
 
   const fetchOrders = useCallback(() => {
     if (exchange !== "okx" || !isConfigured) return;
@@ -205,9 +231,13 @@ export default function DualInvestment() {
       return;
     }
     fetchOrders();
-    const timer = setInterval(fetchOrders, 30_000);
-    return () => clearInterval(timer);
-  }, [exchange, isConfigured, fetchOrders]);
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      timer = setTimeout(() => { fetchOrders(); schedule(); }, jitteredInterval());
+    };
+    schedule();
+    return () => clearTimeout(timer);
+  }, [exchange, isConfigured, fetchOrders, jitteredInterval]);
 
   const settleDates = useMemo(() => {
     const dates = [...new Set(products.map((p) => p.settleDate))];
@@ -246,13 +276,17 @@ export default function DualInvestment() {
   const handleAnalyze = () => {
     if (!ctxMenu) return;
     const p = ctxMenu.product;
-    const dir = p.direction === "buy_low" ? "Buy Low" : "Sell High";
+    const dir = p.direction === "buy_low" ? "低买" : "高卖";
+    const dirEn = p.direction === "buy_low" ? "Buy Low" : "Sell High";
     const spot = spotPrice ? `$${spotPrice.toLocaleString()}` : "unknown";
-    const prompt =
-      lang === "zh"
-        ? `分析这个 ${p.coin} ${dir === "Buy Low" ? "低买" : "高卖"} 双币投资产品：行权价 $${p.strikePrice.toLocaleString()}，APR ${p.aprPercent.toFixed(2)}%，期限 ${p.duration} 天，交割日 ${p.settleDate}，当前现货价 ${spot}。值得买吗？风险如何？（请直接基于以上数据分析，不要调用工具查询）`
-        : `Analyze this ${p.coin} ${dir} dual investment: strike $${p.strikePrice.toLocaleString()}, APR ${p.aprPercent.toFixed(2)}%, ${p.duration} days, settle ${p.settleDate}, current spot ${spot}. Is it worth it? What are the risks? (Analyze directly with the data above, do not call any tools)`;
-    submitToChat(prompt);
+    const strikeStr = `$${p.strikePrice.toLocaleString()}`;
+    const prompt = lang === "zh"
+      ? `分析这个 ${p.coin} ${dir}双币投资产品：行权价 ${strikeStr}，APR ${p.aprPercent.toFixed(2)}%，期限 ${p.duration} 天，交割日 ${p.settleDate}，当前现货价 ${spot}。请查看市场情绪、技术面和最新新闻，帮我判断这个价位是否安全，值得申购吗？`
+      : `Analyze this ${p.coin} ${dirEn} DCD: strike ${strikeStr}, APR ${p.aprPercent.toFixed(2)}%, ${p.duration} days, settle ${p.settleDate}, spot ${spot}. Check market sentiment, technicals, and news. Is this strike safe? Worth subscribing?`;
+    const displayText = lang === "zh"
+      ? `分析 ${p.coin} ${dir} ${strikeStr}`
+      : `Analyze ${p.coin} ${dirEn} ${strikeStr}`;
+    submitToChat(prompt, displayText);
     setCtxMenu(null);
   };
 
@@ -290,6 +324,7 @@ export default function DualInvestment() {
         : `Subscribe to DCD: ${p.id}, invest ${amt} ${p.investCoin}, ${p.coin} ${p.direction === "buy_low" ? "Buy Low" : "Sell High"}, strike $${p.strikePrice.toLocaleString()}, APR ${p.aprPercent.toFixed(2)}%, ${p.duration} days.`;
     submitToChat(prompt);
     setSubModal(null);
+    setTimeout(refreshBalance, 5000);
   };
 
   const handleRedeem = (order: DcdOrder) => {
@@ -366,7 +401,7 @@ export default function DualInvestment() {
       <div className="expiration-bar">
         <label>{t("dualExchange")}</label>
         <div className="tab-bar" style={{ marginBottom: 0 }}>
-          {(["binance", "okx"] as Exchange[]).map((ex) => (
+          {(["okx", "binance"] as Exchange[]).map((ex) => (
             <button
               key={ex}
               className={exchange === ex ? "active" : ""}
@@ -374,7 +409,7 @@ export default function DualInvestment() {
               disabled={!exchangeStatus[ex]}
               title={exchangeStatus[ex] ? "" : t("dualExchangeNotConfigured")}
             >
-              {ex === "binance" ? "Binance" : "OKX"}
+              {ex === "okx" ? (lang === "zh" ? "欧易" : "OKX") : (lang === "zh" ? "币安" : "Binance")}
             </button>
           ))}
         </div>
@@ -514,6 +549,7 @@ export default function DualInvestment() {
                   <thead>
                     <tr>
                       <th>{t("dualInvestCoin")}</th>
+                      <th>{t("dualOrderType")}</th>
                       <th>{t("colStrike")}</th>
                       <th>APR</th>
                       <th>{t("dualOrderAmt")}</th>
@@ -525,7 +561,18 @@ export default function DualInvestment() {
                   <tbody>
                     {dcdOrders.map((o) => (
                       <tr key={o.ordId}>
-                        <td>{o.coin} {o.direction === "buy_low" ? "↓" : "↑"}</td>
+                        <td>{o.coin}</td>
+                        <td>
+                          <span style={{
+                            fontSize: "0.78rem",
+                            padding: "1px 6px",
+                            borderRadius: 4,
+                            background: o.direction === "buy_low" ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)",
+                            color: o.direction === "buy_low" ? "var(--green)" : "var(--red, #ef4444)",
+                          }}>
+                            {o.direction === "buy_low" ? t("dualBuyLow") : t("dualSellHigh")}
+                          </span>
+                        </td>
                         <td>{o.strikePrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                         <td style={{ color: "var(--green)", fontWeight: 600 }}>
                           {o.aprPercent.toFixed(2)}%

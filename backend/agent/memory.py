@@ -1,20 +1,21 @@
-"""Long-term memory store for user trading preferences.
+"""Long-term memory — user trading preference profiles.
 
-Uses LangGraph's native SqliteStore — the official persistent Store API —
-so the agent's long-term memory is managed the same way LangGraph manages it
-internally (namespaced key-value pairs with SQLite persistence).
+Operates on LangGraph's abstract ``BaseStore`` so it works with any
+backend (SQLite, PostgreSQL, etc.).  Profile data is stored as
+namespaced key-value pairs: ``("profiles", user_id) → "trading_profile"``.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import sqlite3
-from pathlib import Path
 from typing import Any
 
+from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.store.base import BaseStore
-from langgraph.store.sqlite import SqliteStore
+
+from backend.agent.prompts import EXTRACTION_PROMPT
+from backend.agent.utils import extract_text
 
 logger = logging.getLogger(__name__)
 
@@ -30,48 +31,6 @@ DEFAULT_PROFILE: dict[str, Any] = {
 
 PROFILE_NAMESPACE = ("profiles",)
 PROFILE_KEY = "trading_profile"
-
-
-def create_store(db_path: str | Path) -> SqliteStore:
-    """Create a LangGraph SqliteStore backed by the given file.
-
-    Uses isolation_level=None (autocommit) as required by SqliteStore's
-    internal transaction management.
-    """
-    db_path = Path(db_path)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), check_same_thread=False, isolation_level=None)
-    store = SqliteStore(conn)
-    store.setup()
-    _migrate_legacy_profiles(store, db_path.parent)
-    return store
-
-
-def _migrate_legacy_profiles(store: SqliteStore, data_dir: Path) -> None:
-    """One-time migration: import data from the old profiles.db if it exists."""
-    legacy_db = data_dir / "profiles.db"
-    if not legacy_db.exists():
-        return
-    try:
-        legacy_conn = sqlite3.connect(str(legacy_db))
-        rows = legacy_conn.execute(
-            "SELECT user_id, profile FROM trading_profiles"
-        ).fetchall()
-        legacy_conn.close()
-
-        for user_id, profile_json in rows:
-            ns = (*PROFILE_NAMESPACE, user_id)
-            existing = store.get(ns, PROFILE_KEY)
-            if existing is not None:
-                continue
-            profile = json.loads(profile_json)
-            store.put(ns, PROFILE_KEY, profile)
-            logger.info("Migrated profile for user '%s' from legacy profiles.db", user_id)
-
-        legacy_db.rename(legacy_db.with_suffix(".db.bak"))
-        logger.info("Legacy profiles.db renamed to profiles.db.bak")
-    except Exception as exc:
-        logger.warning("Legacy migration skipped: %s", exc)
 
 
 def get_profile_from_store(store: BaseStore, user_id: str = "default") -> dict[str, Any]:
@@ -120,3 +79,53 @@ def profile_as_text(store: BaseStore, user_id: str = "default") -> str:
     if not lines:
         return "暂无历史偏好数据，请在对话中了解用户的交易风格。"
     return "\n".join(lines)
+
+
+async def get_history(
+    checkpointer: Any,
+    thread_id: str = "default",
+) -> list[dict[str, str]]:
+    """Retrieve conversation history for a thread from the checkpointer."""
+    config = {"configurable": {"thread_id": thread_id}}
+    try:
+        state = await checkpointer.aget(config)
+        if not state or "channel_values" not in state:
+            return []
+        messages = state["channel_values"].get("messages", [])
+        history = []
+        for msg in messages:
+            role = getattr(msg, "type", "unknown")
+            content = extract_text(getattr(msg, "content", ""))
+            if role in ("human", "ai") and content:
+                history.append({
+                    "role": "user" if role == "human" else "assistant",
+                    "content": content,
+                })
+        return history
+    except Exception:
+        return []
+
+
+def try_extract_profile(
+    model: BaseChatModel,
+    store: BaseStore,
+    user_msg: str,
+    assistant_msg: str,
+    user_id: str = "default",
+) -> None:
+    """Best-effort extraction of trading preferences from a conversation turn."""
+    try:
+        conversation = f"User: {user_msg}\nAssistant: {assistant_msg}"
+        prompt = EXTRACTION_PROMPT.format(conversation=conversation)
+        result = model.invoke(prompt)
+        text = extract_text(result.content).strip()
+
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+        updates = json.loads(text)
+        if updates and isinstance(updates, dict):
+            update_profile_in_store(store, updates, user_id)
+            logger.info("Profile updated for user %s: %s", user_id, updates)
+    except (json.JSONDecodeError, Exception) as exc:
+        logger.debug("Profile extraction skipped: %s", exc)

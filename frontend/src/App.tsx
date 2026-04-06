@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import OptionsChain from "./components/OptionsChain";
 import ChatPanel from "./components/ChatPanel";
 import Sidebar from "./components/Sidebar";
@@ -29,6 +29,44 @@ function App() {
     setActivePage("options");
     setOptionsTab("chain");
   }, []);
+
+  const CHAT_MIN = 300;
+  const CHAT_MAX = 700;
+  const CHAT_DEFAULT = 400;
+  const [chatWidth, setChatWidth] = useState(
+    () => Number(localStorage.getItem("chatWidth")) || CHAT_DEFAULT
+  );
+  const dragging = useRef(false);
+
+  const onResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragging.current = true;
+    const startX = e.clientX;
+    const startW = chatWidth;
+
+    const onMove = (ev: MouseEvent) => {
+      const delta = startX - ev.clientX;
+      const next = Math.min(CHAT_MAX, Math.max(CHAT_MIN, startW + delta));
+      setChatWidth(next);
+    };
+
+    const onUp = () => {
+      dragging.current = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [chatWidth]);
+
+  useEffect(() => {
+    localStorage.setItem("chatWidth", String(chatWidth));
+  }, [chatWidth]);
 
   const isOptions = activePage === "options";
 
@@ -90,7 +128,8 @@ function App() {
           )}
           {activePage === "settings" && <Settings />}
         </div>
-        <div className="panel-right">
+        <div className="panel-resize-handle" onMouseDown={onResizeStart} />
+        <div className="panel-right" style={{ width: chatWidth }}>
           <ChatPanel />
         </div>
       </main>
