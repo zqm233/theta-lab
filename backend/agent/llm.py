@@ -108,26 +108,59 @@ def create_llm() -> ContentNormalizingLLM:
 
     if provider == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
-        kwargs: dict = {"model": model}
+        kwargs: dict = {
+            "model": model,
+            "max_retries": 2,  # Limit retries to prevent infinite loops
+            "timeout": 60.0,   # 60 second timeout
+        }
         if base_url and "googleapis" in base_url:
             kwargs["base_url"] = base_url
         raw = ChatGoogleGenerativeAI(**kwargs)
     elif provider == "openai":
         from langchain_openai import ChatOpenAI
-        kwargs = {"model": model}
+        kwargs = {
+            "model": model,
+            "max_retries": 2,
+            "timeout": 60.0,
+            "max_tokens": 2048,  # Reserve tokens for response
+        }
         if base_url:
             kwargs["base_url"] = base_url
         raw = ChatOpenAI(**kwargs)
+    elif provider == "openrouter":
+        from langchain_openai import ChatOpenAI
+        api_key = os.getenv("OPENROUTER_API_KEY", "")
+        if not api_key:
+            raise ValueError("OPENROUTER_API_KEY is not set.")
+        kwargs = {
+            "model": model,
+            "api_key": api_key,
+            "base_url": base_url or "https://openrouter.ai/api/v1",
+            "max_retries": 2,
+            "timeout": 60.0,
+        }
+        raw = ChatOpenAI(**kwargs)
     elif provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
-        kwargs = {"model": model}
+        kwargs = {
+            "model": model,
+            "max_retries": 2,
+            "timeout": 60.0,
+        }
         if base_url:
             kwargs["base_url"] = base_url
         raw = ChatAnthropic(**kwargs)
+    elif provider == "zhipuai":
+        from langchain_zhipuai import ChatZhipuAI
+        kwargs = {
+            "model": model,
+            "timeout": 60,  # ZhipuAI uses integer timeout
+        }
+        raw = ChatZhipuAI(**kwargs)
     else:
         raise ValueError(
             f"Unsupported LLM_PROVIDER: '{provider}'. "
-            f"Supported: google, openai, anthropic"
+            f"Supported: google, openai, openrouter, anthropic, zhipuai"
         )
 
     return ContentNormalizingLLM(delegate=raw)

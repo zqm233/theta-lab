@@ -152,20 +152,40 @@ def close_trade(req: CloseTradeRequest):
     from datetime import datetime, timezone as tz
     from backend.db import get_conn
 
-    multiplier = 1 if req.side == "sell" else -1
-    pnl = round(multiplier * (req.entry_price - req.exit_price) * req.qty * 100, 2)
+    # P&L 计算逻辑
+    if req.exit_type == "exercised":
+        # 被行权：转为持有正股，期权阶段盈亏无法确定
+        # 暂时记录为 0（实际盈亏需要后续卖出正股后才能确定）
+        pnl = 0.0
+    elif req.exit_type == "expired_worthless":
+        # OTM 到期归零：Sell 方全收权利金，Buy 方损失权利金
+        multiplier = 1 if req.side == "sell" else -1
+        pnl = round(multiplier * req.entry_price * req.qty * 100, 2)
+    else:
+        # 手动平仓：正常差价计算
+        multiplier = 1 if req.side == "sell" else -1
+        pnl = round(multiplier * (req.entry_price - req.exit_price) * req.qty * 100, 2)
+    
     closed_at = datetime.now(tz.utc).isoformat()
+
+    # Generate notes based on exit type
+    notes = ""
+    if req.exit_type == "exercised":
+        action = "买入" if req.type == "put" else "卖出"
+        notes = f"ITM到期被行权，需在券商处理正股 {req.qty * 100} 股 @ ${req.strike:.2f}"
+    elif req.exit_type == "expired_worthless":
+        notes = "OTM到期自动归零"
 
     conn = get_conn()
     conn.execute(
         """INSERT INTO trades
            (id, ticker, type, side, strike, qty, entry_price, exit_price,
-            expiration, opened_at, closed_at, pnl)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            expiration, opened_at, closed_at, pnl, exit_type, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             req.id, req.ticker, req.type, req.side, req.strike, req.qty,
             req.entry_price, req.exit_price, req.expiration,
-            req.opened_at, closed_at, pnl,
+            req.opened_at, closed_at, pnl, req.exit_type, notes,
         ),
     )
     conn.commit()
@@ -183,6 +203,8 @@ def close_trade(req: CloseTradeRequest):
         "openedAt": req.opened_at,
         "closedAt": closed_at,
         "pnl": pnl,
+        "exitType": req.exit_type,
+        "notes": notes,
     }
 
 
@@ -210,6 +232,8 @@ def get_trade_history():
             "openedAt": r["opened_at"],
             "closedAt": r["closed_at"],
             "pnl": r["pnl"],
+            "exitType": r["exit_type"] if "exit_type" in r.keys() else "manual",
+            "notes": r["notes"] if "notes" in r.keys() else "",
         }
         for r in rows
     ]

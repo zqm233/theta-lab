@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes import router
+from backend.api.routes_v1 import router as router_v1
 from backend.db import close_db, init_db
 
 load_dotenv(override=True)
@@ -93,7 +94,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router)
+app.include_router(router)  # Legacy API (deprecated after 3 months)
+app.include_router(router_v1)  # v1 RESTful API
 
 
 @app.get("/")
@@ -102,7 +104,18 @@ def health():
 
 
 def main():
-    uvicorn.run("backend.app:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "backend.app:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        reload_excludes=[
+            "data/rag/**",
+            "data/*.db*",
+            "**/__pycache__/**",
+            "**/.pytest_cache/**",
+        ],
+    )
 
 
 if __name__ == "__main__":

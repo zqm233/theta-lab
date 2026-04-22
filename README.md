@@ -15,6 +15,13 @@ ThetaLab is an AI-powered assistant built specifically for **options sellers**. 
 
 Unlike general-purpose trading platforms, ThetaLab is designed around the options seller's workflow: finding high-premium strikes, evaluating cushion and ROIC, monitoring IV rank, tracking earnings risk, and managing a portfolio of short options positions.
 
+## Product scope (research-first)
+
+- **Decision support & research** — ThetaLab’s core value is **options analysis, volatility context, and explainable recommendations** (LangGraph agent, tools, memory, RAG). It is **not** an automated broker router for US listed options.
+- **US equities & options** — Market data and chain analytics are **read-only** from public/delayed feeds. **Portfolio and trade history are manual “paper” tracking** in local SQLite: you record positions yourself; **no agent or API in this repo places orders** with a US broker.
+- **Crypto (OKX / DCD)** — Optional MCP integration may execute **only after explicit human-in-the-loop confirmation** in the UI when you enable tools and approve each sensitive action.
+- **Comparison to generic agent frameworks** — Frameworks that emphasize multi-channel automation or pluggable execution are complementary. ThetaLab focuses on **domain depth and interview-grade LangGraph patterns**, not duplicating a full execution stack unless you explicitly extend it.
+
 The built-in **hierarchical multi-agent system** (LangGraph + LangChain, any LLM provider) acts as your research and trading copilot. A Router agent classifies user intent and dispatches to specialized sub-agents — Options, Crypto (with Market/Account/DCD sub-routing), or General — each with its own tools and prompt. Sensitive operations (account transfers, DCD purchases) trigger a human-in-the-loop confirmation flow.
 
 ThetaLab also implements the **[A2A (Agent-to-Agent) protocol](https://github.com/google/A2A)**, exposing itself as an interoperable agent that other AI agents can discover and collaborate with over HTTP.
@@ -74,7 +81,7 @@ ThetaLab uses three levels of agent communication:
 | Component | Technology |
 |-----------|-----------|
 | Backend | Python, FastAPI, Uvicorn |
-| Frontend | React 19, Vite, TypeScript |
+| Frontend | Next.js 16, React 19, TypeScript, TanStack Query |
 | AI Agent | LangChain + LangGraph (hierarchical multi-agent) |
 | LLM | Any provider — Gemini, OpenAI, Anthropic, or OpenRouter-compatible |
 | Agent Interop | A2A protocol (a2a-sdk) |
@@ -134,13 +141,12 @@ thetalab/
 │       ├── securities.py          # Security search
 │       ├── binance.py             # Binance dual investment
 │       └── okx.py                 # OKX dual investment
-├── frontend/
-│   └── src/
-│       ├── App.tsx                # Main app shell (resizable chat panel)
-│       ├── components/            # UI components
-│       ├── hooks/                 # Custom React hooks
-│       ├── i18n.tsx               # Internationalization (zh/en)
-│       └── ...
+├── frontend/                      # Next.js frontend (production)
+│   └── app/
+│       ├── page.tsx               # Main options workspace
+│       ├── accounts/              # Portfolio overview
+│       ├── dual-invest/           # Crypto dual investment
+│       └── settings/              # System configuration
 └── data/                          # Runtime SQLite databases (gitignored)
 ```
 
@@ -172,11 +178,13 @@ cp .env.example .env
 3. **Install dependencies**
 
 ```bash
-uv sync              # Backend (Python)
-cd frontend && bun install && cd ..   # Frontend
+uv sync                      # Backend (Python)
+cd frontend && bun install   # Frontend (Next.js)
 ```
 
 4. **Start both servers**
+
+For a **demo talk track** (what to show and what *not* to promise), see [docs/DEMO.md](docs/DEMO.md).
 
 ```bash
 make dev
@@ -227,4 +235,4 @@ The agent advertises three skills via its Agent Card: **Options Analysis**, **Cr
 
 ## License
 
-This project is for demonstration and educational purposes.
+This project is for demonstration and educational purposes. It does not provide investment advice or broker execution for US options; all trading decisions and external integrations are your responsibility.

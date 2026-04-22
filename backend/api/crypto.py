@@ -71,10 +71,37 @@ def okx_balance(ccy: str = Query("", description="Currency filter, e.g. USDT")):
         raise HTTPException(502, f"OKX API error: {e}")
 
 
+@router.get("/okx/dcd/orders/history")
+def okx_dcd_orders_history():
+    """OKX DCD history (filled + expired): two compliant upstream GETs, merged here."""
+    from backend.data.okx import OkxConfigError, get_okx_dcd_orders_history_filled_expired
+
+    try:
+        orders = get_okx_dcd_orders_history_filled_expired()
+        return {"orders": orders}
+    except OkxConfigError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.exception("OKX DCD orders history error")
+        raise HTTPException(502, f"OKX API error: {e}")
+
+
 @router.get("/okx/dcd/orders")
-def okx_dcd_orders(state: str = Query("", description="live, filled, expired, canceled")):
-    """Return OKX DCD orders."""
+def okx_dcd_orders(
+    state: str = Query(
+        "",
+        description='Single OKX order state, e.g. "live", "filled", "expired", "canceled". '
+        "For filled+expired history use GET /okx/dcd/orders/history (do not pass comma-separated values).",
+    ),
+):
+    """Return OKX DCD orders for one ``state`` (one upstream query param)."""
     from backend.data.okx import OkxConfigError, get_dcd_orders
+
+    if "," in state:
+        raise HTTPException(
+            400,
+            "Comma-separated state is not supported. Use GET /api/v1/okx/dcd/orders/history for history.",
+        )
 
     try:
         orders = get_dcd_orders(state)

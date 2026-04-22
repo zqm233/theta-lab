@@ -15,6 +15,7 @@ ENV/
 
 # Environment and secrets
 .env
+.env.bak
 .env.local
 .env.*.local
 
@@ -23,6 +24,10 @@ data/*.db
 data/*.db.bak*
 data/*.db-shm
 data/*.db-wal
+
+# RAG vector store
+data/rag/chroma/
+data/rag/*.sqlite3
 
 # Cursor
 .cursorrules
@@ -33,6 +38,14 @@ docs/agent-architecture.md
 # Frontend
 frontend/node_modules/
 frontend/dist/
+frontend-next/node_modules/
+frontend-next/.next/
+frontend-next/out/
+
+# Package manager lock files (keep bun.lock, ignore others)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 
 # IDE
 .idea/

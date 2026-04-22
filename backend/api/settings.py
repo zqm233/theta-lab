@@ -20,11 +20,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_SUPPORTED_PROVIDERS = ["google", "openai", "anthropic"]
+_SUPPORTED_PROVIDERS = ["google", "openai", "openrouter", "anthropic", "zhipuai"]
 _PROVIDER_API_KEY_ENV = {
     "google": "GOOGLE_API_KEY",
     "openai": "OPENAI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
+    "zhipuai": "ZHIPUAI_API_KEY",
 }
 
 _ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"

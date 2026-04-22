@@ -8,12 +8,15 @@ Handles the core stream-parse-resume loop, including:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
 from langchain_core.messages import ToolMessage
 
 from backend.agent.utils import extract_text, is_safe_tool
+
+logger = logging.getLogger(__name__)
 
 
 def unpack_stream_chunk(raw: Any) -> tuple[Any, dict]:
@@ -80,10 +83,12 @@ async def stream_loop(
                             emitted_tool_starts.add(name)
                             yield {"type": "tool_start", "name": name}
 
-                if msg.content:
-                    text = extract_text(msg.content)
-                    if text:
-                        yield {"type": "token", "content": text}
+            # Extract content from any AIMessage (not just model node)
+            if hasattr(msg, "content") and msg.content:
+                text = extract_text(msg.content)
+                if text:
+                    logger.debug(f"[Stream] Yielding token: {text[:100]}...")
+                    yield {"type": "token", "content": text}
 
             elif isinstance(msg, ToolMessage):
                 tool_name = msg.name or ""

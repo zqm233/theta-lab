@@ -24,6 +24,7 @@ class CloseTradeRequest(BaseModel):
     exit_price: float
     expiration: str
     opened_at: str
+    exit_type: str = "manual"  # manual, expired_worthless, exercised
 
 
 class CreateAccountRequest(BaseModel):

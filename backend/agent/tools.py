@@ -178,6 +178,28 @@ def get_earnings_dates(ticker: str) -> str:
         return str(e)
 
 
+@tool
+def get_current_datetime() -> str:
+    """Get the current date and time in US Eastern Time (ET).
+    
+    Use this tool when you need to:
+    - Calculate days until an option expiration date
+    - Check if a date has passed or is upcoming  
+    - Determine if earnings are near
+    - Know the exact current date for any date-based calculation
+    
+    Returns:
+        Current date and time in ISO format with day of week.
+        Example: 2026-04-14 09:30:00 (Tuesday)
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    
+    et_tz = ZoneInfo("America/New_York")
+    now = datetime.now(et_tz)
+    return now.strftime("%Y-%m-%d %H:%M:%S (%A)")
+
+
 def _normal_cdf(x: float) -> float:
     return 0.5 * (1.0 + erf(x / sqrt(2.0)))
 
@@ -366,12 +388,14 @@ OPTIONS_TOOLS = [
     sell_put_analysis,
     get_volatility_summary,
     get_earnings_dates,
+    get_current_datetime,
     analyze_single_leg_option,
 ]
 
 CRYPTO_TOOLS = [
     get_dual_investment_products,
     get_okx_dual_investment_products,
+    get_current_datetime,
 ]
 
 ALL_TOOLS = OPTIONS_TOOLS + CRYPTO_TOOLS

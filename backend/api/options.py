@@ -177,7 +177,18 @@ def get_options_chain(
         except Exception:
             chain["earningsWarning"] = None
 
-    return chain
+    # 清理 NaN 值，避免 JSON 序列化错误
+    import math
+    def clean_nan(obj):
+        if isinstance(obj, dict):
+            return {k: clean_nan(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [clean_nan(item) for item in obj]
+        elif isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        return obj
+    
+    return clean_nan(chain)
 
 
 @router.get("/expirations/{ticker}")

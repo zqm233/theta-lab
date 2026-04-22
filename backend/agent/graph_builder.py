@@ -14,8 +14,11 @@ Architecture::
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from langchain.agents import create_agent
+
+logger = logging.getLogger(__name__)
 from langchain_core.messages import SystemMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
@@ -26,7 +29,14 @@ from backend.agent.graphs.crypto import build_graph as build_crypto_graph
 from backend.agent.llm import ContentNormalizingLLM
 from backend.agent.mcp_tools import get_fa_tools
 from backend.agent.prompts import GENERAL_PROMPT, OPTIONS_PROMPT, ROUTER_PROMPT
+from backend.agent.summarization import summarize_if_needed
 from backend.agent.tools import OPTIONS_TOOLS
+
+try:
+    from backend.agent.tools_rag import search_options_knowledge, search_general_knowledge
+    _RAG_AVAILABLE = True
+except ImportError:
+    _RAG_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +52,52 @@ class GraphBuilder:
         self._model = model
 
     def _make_router_node(self):
-        router_llm = self._model.delegate
+        """Create router node that works with models that don't support json_schema."""
+        from langchain_core.tools import tool
+        
+        @tool
+        def route_to_domain(destination: Literal["options", "crypto", "general"]) -> str:
+            """Route the user query to the appropriate domain expert.
+            
+            Args:
+                destination: The domain to route to - "options" for stock options trading,
+                           "crypto" for cryptocurrency and dual investment,
+                           "general" for other investment questions.
+            """
+            return destination
+        
+        router_llm = self._model.delegate.bind_tools([route_to_domain])
 
         async def _route(state: AgentState):
-            structured = router_llm.with_structured_output(RouteDecision)
-            result = await structured.ainvoke(
-                [SystemMessage(content=ROUTER_PROMPT)] + state["messages"]
+            messages = await summarize_if_needed(
+                self._model, state["messages"], max_recent=6, trigger_threshold=12
             )
-            logger.info("Router decision: %s", result.destination)
-            return {"route": result.destination}
+            result = await router_llm.ainvoke(
+                [SystemMessage(content=ROUTER_PROMPT)] + messages
+            )
+            
+            # Extract destination from tool calls
+            destination = "general"  # default
+            if hasattr(result, "tool_calls") and result.tool_calls:
+                tc = result.tool_calls[0]
+                destination = tc.get("args", {}).get("destination", "general")
+            
+            logger.info("Router decision: %s", destination)
+            return {"route": destination}
 
         return _route
+
+    def _make_wrapped_agent_node(self, agent, name: str):
+        """Wrap an agent node to apply message summarization before execution."""
+
+        async def _wrapped(state: AgentState):
+            messages = await summarize_if_needed(
+                self._model, state["messages"], max_recent=4, trigger_threshold=6
+            )
+            result = await agent.ainvoke({"messages": messages})
+            return result
+
+        return _wrapped
 
     def build(
         self,
@@ -65,27 +110,74 @@ class GraphBuilder:
         Returns a compiled LangGraph runnable ready for
         ``ainvoke`` / ``astream``.
         """
+        import os
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        
+        # Get current date in US Eastern Time
+        et_tz = ZoneInfo("America/New_York")
+        current_date = datetime.now(et_tz).strftime("%Y-%m-%d (%A)")
+        
+        use_simple_agent = os.getenv("USE_SIMPLE_AGENT", "false").lower() == "true"
+        
+        if use_simple_agent:
+            # Simple mode: single agent with all tools (saves requests)
+            logger.info("Building SIMPLE agent (no router)")
+            all_tools = list(OPTIONS_TOOLS) + get_fa_tools()
+            if _RAG_AVAILABLE:
+                all_tools.append(search_options_knowledge)
+                all_tools.append(search_general_knowledge)
+            
+            simple_agent = create_agent(
+                model=self._model,
+                system_prompt=OPTIONS_PROMPT.format(
+                    current_date=current_date,
+                    user_profile=profile_text
+                ),
+                tools=all_tools or None,
+                name="unified",
+            )
+            
+            builder = StateGraph(AgentState)
+            builder.add_node("agent", self._make_wrapped_agent_node(simple_agent, "unified"))
+            builder.add_edge(START, "agent")
+            builder.add_edge("agent", END)
+            return builder.compile(checkpointer=checkpointer, store=store)
+        
+        # Original hierarchical mode
         options_tools = list(OPTIONS_TOOLS) + get_fa_tools()
+        if _RAG_AVAILABLE:
+            options_tools.append(search_options_knowledge)
         options_agent = create_agent(
             model=self._model,
-            system_prompt=OPTIONS_PROMPT.format(user_profile=profile_text),
+            system_prompt=OPTIONS_PROMPT.format(
+                current_date=current_date,
+                user_profile=profile_text
+            ),
             tools=options_tools or None,
             name="options",
         )
 
-        crypto_graph = build_crypto_graph(self._model, profile_text)
+        crypto_graph = build_crypto_graph(self._model, profile_text, current_date)
 
+        general_tools = []
+        if _RAG_AVAILABLE:
+            general_tools.append(search_general_knowledge)
         general_agent = create_agent(
             model=self._model,
-            system_prompt=GENERAL_PROMPT.format(user_profile=profile_text),
+            system_prompt=GENERAL_PROMPT.format(
+                current_date=current_date,
+                user_profile=profile_text
+            ),
+            tools=general_tools or None,
             name="general",
         )
 
         builder = StateGraph(AgentState)
         builder.add_node("router", self._make_router_node())
-        builder.add_node("options", options_agent)
+        builder.add_node("options", self._make_wrapped_agent_node(options_agent, "options"))
         builder.add_node("crypto", crypto_graph)
-        builder.add_node("general", general_agent)
+        builder.add_node("general", self._make_wrapped_agent_node(general_agent, "general"))
 
         builder.add_edge(START, "router")
         builder.add_conditional_edges("router", get_route)

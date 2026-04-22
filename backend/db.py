@@ -37,7 +37,9 @@ def init_db() -> None:
             expiration  TEXT NOT NULL,
             opened_at   TEXT NOT NULL,
             closed_at   TEXT NOT NULL,
-            pnl         REAL NOT NULL
+            pnl         REAL NOT NULL,
+            exit_type   TEXT NOT NULL DEFAULT 'manual',
+            notes       TEXT NOT NULL DEFAULT ''
         )
     """)
     conn.execute("""

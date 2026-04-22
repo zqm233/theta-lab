@@ -60,9 +60,35 @@ async def chat(request: ChatRequest):
             yield {"event": "done", "data": json.dumps({"status": "ok"})}
         except Exception as exc:
             logger.exception("Chat stream error")
+            
+            # Log full error details for debugging
+            error_details = {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+            if hasattr(exc, "response"):
+                try:
+                    error_details["response_body"] = exc.response.json()
+                except:
+                    pass
+            logger.error(f"Full error details: {error_details}")
+            
+            # Extract more user-friendly error message
+            error_msg = str(exc)
+            if "503" in error_msg or "Service Unavailable" in error_msg:
+                error_msg = "LLM service is currently overloaded. Please try again in a few moments."
+            elif "timeout" in error_msg.lower():
+                error_msg = "Request timed out. Please try again."
+            elif "API key" in error_msg or "authentication" in error_msg.lower():
+                error_msg = "Invalid API key. Please check your LLM configuration in Settings."
+            elif "rate limit" in error_msg.lower():
+                error_msg = "Rate limit exceeded. Please wait a moment before trying again."
+            elif "Failed to call a function" in error_msg:
+                error_msg = "Model failed to generate valid tool calls. This may be a model limitation. Try a simpler query or check Settings."
+            
             yield {
                 "event": "error",
-                "data": json.dumps({"error": str(exc)}),
+                "data": json.dumps({"error": error_msg}),
             }
 
     return EventSourceResponse(event_stream())
@@ -98,9 +124,21 @@ async def chat_confirm(request: ConfirmRequest):
             yield {"event": "done", "data": json.dumps({"status": "ok"})}
         except Exception as exc:
             logger.exception("Chat confirm stream error")
+            
+            # Extract more user-friendly error message
+            error_msg = str(exc)
+            if "503" in error_msg or "Service Unavailable" in error_msg:
+                error_msg = "LLM service is currently overloaded. Please try again in a few moments."
+            elif "timeout" in error_msg.lower():
+                error_msg = "Request timed out. Please try again."
+            elif "API key" in error_msg or "authentication" in error_msg.lower():
+                error_msg = "Invalid API key. Please check your LLM configuration in Settings."
+            elif "rate limit" in error_msg.lower():
+                error_msg = "Rate limit exceeded. Please wait a moment before trying again."
+            
             yield {
                 "event": "error",
-                "data": json.dumps({"error": str(exc)}),
+                "data": json.dumps({"error": error_msg}),
             }
 
     return EventSourceResponse(event_stream())
